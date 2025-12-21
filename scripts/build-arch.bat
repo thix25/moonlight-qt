@@ -147,6 +147,9 @@ pushd %BUILD_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 popd
 
+echo Generating moc files for in-source Q_OBJECT classes
+powershell -ExecutionPolicy Bypass -File "%SOURCE_ROOT%\scripts\generate-mocs.ps1"
+if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Compiling Moonlight in %BUILD_CONFIG% configuration
 pushd %BUILD_FOLDER%
