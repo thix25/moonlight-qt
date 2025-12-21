@@ -4,6 +4,8 @@
 #include <QRect>
 #include <QQmlEngine>
 
+class QSettings;
+
 class StreamingPreferences : public QObject
 {
     Q_OBJECT
@@ -236,8 +238,6 @@ private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
 
     QString getSuffixFromLanguage(Language lang);
-
-    void loadSettings(QSettings& settings, bool isClientSpecific);
 
     QQmlEngine* m_QmlEngine;
     QString m_CurrentClientUuid;
