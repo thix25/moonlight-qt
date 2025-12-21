@@ -90,6 +90,9 @@ echo Detected target architecture: %ARCH%
 
 set SIGNTOOL_PARAMS=sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /sha1 8b9d0d682ad9459e54f05a79694bc10f9876e297 /v
 
+rem Set 7z path
+set SEVENZIP="C:\Program Files\7-Zip\7z.exe"
+
 set BUILD_ROOT=%cd%\build
 set SOURCE_ROOT=%cd%
 set BUILD_FOLDER=%BUILD_ROOT%\build-%ARCH%-%BUILD_CONFIG%
@@ -144,9 +147,11 @@ pushd %BUILD_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
 popd
 
+
 echo Compiling Moonlight in %BUILD_CONFIG% configuration
 pushd %BUILD_FOLDER%
-%SOURCE_ROOT%\scripts\jom.exe %BUILD_CONFIG%
+@REM %SOURCE_ROOT%\scripts\jom.exe %BUILD_CONFIG%
+nmake %BUILD_CONFIG%
 if !ERRORLEVEL! NEQ 0 goto Error
 popd
 
@@ -157,7 +162,7 @@ for /r "%BUILD_FOLDER%" %%f in (*.pdb) do (
 )
 copy %SOURCE_ROOT%\libs\windows\lib\%ARCH%\*.pdb %SYMBOLS_FOLDER%
 if !ERRORLEVEL! NEQ 0 goto Error
-7z a %SYMBOLS_FOLDER%\MoonlightDebuggingSymbols-%ARCH%-%VERSION%.zip %SYMBOLS_FOLDER%\*.pdb
+%SEVENZIP% a %SYMBOLS_FOLDER%\MoonlightDebuggingSymbols-%ARCH%-%VERSION%.zip %SYMBOLS_FOLDER%\*.pdb
 if !ERRORLEVEL! NEQ 0 goto Error
 
 if "%ML_SYMBOL_STORE%" NEQ "" (
@@ -258,7 +263,7 @@ if !ERRORLEVEL! NEQ 0 goto Error
 rem This file tells Moonlight that it's a portable installation
 echo. > %DEPLOY_FOLDER%\portable.dat
 if !ERRORLEVEL! NEQ 0 goto Error
-7z a %INSTALLER_FOLDER%\MoonlightPortable-%ARCH%-%VERSION%.zip %DEPLOY_FOLDER%\*
+%SEVENZIP% a %INSTALLER_FOLDER%\MoonlightPortable-%ARCH%-%VERSION%.zip %DEPLOY_FOLDER%\*
 if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Build successful for Moonlight v%VERSION% %ARCH% binaries!
