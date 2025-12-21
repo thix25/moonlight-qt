@@ -18,6 +18,13 @@ public:
 
     void reload();
 
+    // Per-client settings management
+    Q_INVOKABLE void loadForClient(QString clientUuid);
+    Q_INVOKABLE void saveForClient(QString clientUuid);
+    Q_INVOKABLE void resetClientSettings(QString clientUuid);
+    Q_INVOKABLE bool hasClientSettings(QString clientUuid);
+    Q_INVOKABLE QString currentClientUuid() const { return m_CurrentClientUuid; }
+
     enum AudioConfig
     {
         AC_STEREO,
@@ -230,6 +237,9 @@ private:
 
     QString getSuffixFromLanguage(Language lang);
 
+    void loadSettings(QSettings& settings, bool isClientSpecific);
+
     QQmlEngine* m_QmlEngine;
+    QString m_CurrentClientUuid;
 };
 

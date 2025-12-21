@@ -193,6 +193,15 @@ CenteredGridView {
                 }
 
                 NavigableMenuItem {
+                    text: qsTr("PC Settings")
+                    onTriggered: {
+                        clientSettingsDialog.clientName = model.name
+                        clientSettingsDialog.clientUuid = model.uuid
+                        clientSettingsDialog.open()
+                    }
+                }
+
+                NavigableMenuItem {
                     text: qsTr("Rename PC")
                     onTriggered: {
                         renamePcDialog.pcIndex = index
@@ -285,6 +294,10 @@ CenteredGridView {
         // Using Setup-Guide here instead of Troubleshooting because it's likely that users
         // will arrive here by forgetting to enable GameStream or not forwarding ports.
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"
+    }
+
+    ClientSettingsDialog {
+        id: clientSettingsDialog
     }
 
     NavigableMessageDialog {
