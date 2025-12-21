@@ -412,3 +412,149 @@ int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool
 
     return qRound(resolutionFactor * frameRateFactor) * 1000;
 }
+
+void StreamingPreferences::loadForClient(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to load settings for empty client UUID";
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+
+    m_CurrentClientUuid = clientUuid;
+
+    // Load client-specific settings with fallback to current (global) values
+    width = settings.value(SER_WIDTH, width).toInt();
+    height = settings.value(SER_HEIGHT, height).toInt();
+    fps = settings.value(SER_FPS, fps).toInt();
+    enableYUV444 = settings.value(SER_YUV444, enableYUV444).toBool();
+    bitrateKbps = settings.value(SER_BITRATE, bitrateKbps).toInt();
+    unlockBitrate = settings.value(SER_UNLOCK_BITRATE, unlockBitrate).toBool();
+    autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, autoAdjustBitrate).toBool();
+    enableVsync = settings.value(SER_VSYNC, enableVsync).toBool();
+    gameOptimizations = settings.value(SER_GAMEOPTS, gameOptimizations).toBool();
+    playAudioOnHost = settings.value(SER_HOSTAUDIO, playAudioOnHost).toBool();
+    multiController = settings.value(SER_MULTICONT, multiController).toBool();
+    enableMdns = settings.value(SER_MDNS, enableMdns).toBool();
+    quitAppAfter = settings.value(SER_QUITAPPAFTER, quitAppAfter).toBool();
+    absoluteMouseMode = settings.value(SER_ABSMOUSEMODE, absoluteMouseMode).toBool();
+    absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, absoluteTouchMode).toBool();
+    framePacing = settings.value(SER_FRAMEPACING, framePacing).toBool();
+    connectionWarnings = settings.value(SER_CONNWARNINGS, connectionWarnings).toBool();
+    configurationWarnings = settings.value(SER_CONFWARNINGS, configurationWarnings).toBool();
+    richPresence = settings.value(SER_RICHPRESENCE, richPresence).toBool();
+    gamepadMouse = settings.value(SER_GAMEPADMOUSE, gamepadMouse).toBool();
+    detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, detectNetworkBlocking).toBool();
+    showPerformanceOverlay = settings.value(SER_SHOWPERFOVERLAY, showPerformanceOverlay).toBool();
+    packetSize = settings.value(SER_PACKETSIZE, packetSize).toInt();
+    swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, swapMouseButtons).toBool();
+    muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, muteOnFocusLoss).toBool();
+    backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, backgroundGamepad).toBool();
+    reverseScrollDirection = settings.value(SER_REVERSESCROLL, reverseScrollDirection).toBool();
+    swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, swapFaceButtons).toBool();
+    keepAwake = settings.value(SER_KEEPAWAKE, keepAwake).toBool();
+    enableHdr = settings.value(SER_HDR, enableHdr).toBool();
+    captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
+                                                         static_cast<int>(captureSysKeysMode)).toInt());
+    audioConfig = static_cast<AudioConfig>(settings.value(SER_AUDIOCFG,
+                                                  static_cast<int>(audioConfig)).toInt());
+    videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
+                                                  static_cast<int>(videoCodecConfig)).toInt());
+    videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
+                                                  static_cast<int>(videoDecoderSelection)).toInt());
+    windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
+                                                        static_cast<int>(windowMode)).toInt());
+
+    settings.endGroup();
+
+    qInfo() << "Loaded client-specific settings for UUID:" << clientUuid;
+}
+
+void StreamingPreferences::saveForClient(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to save settings for empty client UUID";
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+
+    settings.setValue(SER_WIDTH, width);
+    settings.setValue(SER_HEIGHT, height);
+    settings.setValue(SER_FPS, fps);
+    settings.setValue(SER_BITRATE, bitrateKbps);
+    settings.setValue(SER_UNLOCK_BITRATE, unlockBitrate);
+    settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
+    settings.setValue(SER_VSYNC, enableVsync);
+    settings.setValue(SER_GAMEOPTS, gameOptimizations);
+    settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
+    settings.setValue(SER_MULTICONT, multiController);
+    settings.setValue(SER_MDNS, enableMdns);
+    settings.setValue(SER_QUITAPPAFTER, quitAppAfter);
+    settings.setValue(SER_ABSMOUSEMODE, absoluteMouseMode);
+    settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
+    settings.setValue(SER_FRAMEPACING, framePacing);
+    settings.setValue(SER_CONNWARNINGS, connectionWarnings);
+    settings.setValue(SER_CONFWARNINGS, configurationWarnings);
+    settings.setValue(SER_RICHPRESENCE, richPresence);
+    settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
+    settings.setValue(SER_PACKETSIZE, packetSize);
+    settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
+    settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
+    settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
+    settings.setValue(SER_HDR, enableHdr);
+    settings.setValue(SER_YUV444, enableYUV444);
+    settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
+    settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
+    settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
+    settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
+    settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);
+    settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
+    settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
+    settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
+    settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
+    settings.setValue(SER_KEEPAWAKE, keepAwake);
+
+    settings.endGroup();
+
+    m_CurrentClientUuid = clientUuid;
+
+    qInfo() << "Saved client-specific settings for UUID:" << clientUuid;
+}
+
+void StreamingPreferences::resetClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to reset settings for empty client UUID";
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients");
+    settings.remove(clientUuid);
+    settings.endGroup();
+
+    if (m_CurrentClientUuid == clientUuid) {
+        m_CurrentClientUuid.clear();
+        reload(); // Reload global settings
+    }
+
+    qInfo() << "Reset client-specific settings for UUID:" << clientUuid;
+}
+
+bool StreamingPreferences::hasClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    bool hasSettings = !settings.childKeys().isEmpty();
+    settings.endGroup();
+
+    return hasSettings;
+}

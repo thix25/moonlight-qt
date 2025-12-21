@@ -588,6 +588,14 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_AudioSampleCount(0),
       m_DropAudioEndTime(0)
 {
+    // If we don't have custom preferences and client has specific settings, load them
+    if (!preferences && m_Computer && m_Preferences->hasClientSettings(m_Computer->uuid)) {
+        qInfo() << "Loading client-specific settings for:" << m_Computer->name << "(" << m_Computer->uuid << ")";
+        m_Preferences->loadForClient(m_Computer->uuid);
+        
+        // Update fullscreen state based on client-specific window mode
+        m_IsFullScreen = (m_Preferences->windowMode != StreamingPreferences::WM_WINDOWED || !WMUtils::isRunningDesktopEnvironment());
+    }
 }
 
 Session::~Session()
