@@ -16,12 +16,28 @@ NavigableDialog {
     
     title: qsTr("Settings for %1").arg(clientName)
     
+    Component.onCompleted: {
+        // Connect to the reset signal
+        reset.connect(function() {
+            // Reset to global defaults
+            if (clientUuid !== "") {
+                StreamingPreferences.resetClientSettings(clientUuid)
+                hasCustomSettings = false
+                StreamingPreferences.reload()
+                updateUIFromPreferences()
+            }
+        })
+    }
+    
     onOpened: {
         // Load client-specific settings when dialog opens
         if (clientUuid !== "") {
             hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
             if (hasCustomSettings) {
                 StreamingPreferences.loadForClient(clientUuid)
+            } else {
+                // Load global settings to start with
+                StreamingPreferences.reload()
             }
             updateUIFromPreferences()
         }
@@ -33,20 +49,13 @@ NavigableDialog {
         if (clientUuid !== "") {
             StreamingPreferences.saveForClient(clientUuid)
         }
+        // Reload global settings after saving
+        StreamingPreferences.reload()
     }
     
     onRejected: {
         // Reload global settings without saving
         StreamingPreferences.reload()
-    }
-    
-    onReset: {
-        // Reset to global defaults
-        if (clientUuid !== "") {
-            StreamingPreferences.resetClientSettings(clientUuid)
-            hasCustomSettings = false
-            updateUIFromPreferences()
-        }
     }
     
     function updateUIFromPreferences() {
@@ -127,6 +136,7 @@ NavigableDialog {
                         ListElement { text: "1080p (1920x1080)"; width: 1920; height: 1080 }
                         ListElement { text: "1440p (2560x1440)"; width: 2560; height: 1440 }
                         ListElement { text: "4K (3840x2160)"; width: 3840; height: 2160 }
+                        ListElement { text: "8K (7680x4320)"; width: 7680; height: 4320 }
                     }
                 }
                 
@@ -144,7 +154,9 @@ NavigableDialog {
                         ListElement { text: "30 FPS"; fps: 30 }
                         ListElement { text: "60 FPS"; fps: 60 }
                         ListElement { text: "90 FPS"; fps: 90 }
+                        ListElement { text: "100 FPS"; fps: 100 }
                         ListElement { text: "120 FPS"; fps: 120 }
+                        ListElement { text: "144 FPS"; fps: 144 }
                     }
                 }
                 
