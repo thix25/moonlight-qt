@@ -13,12 +13,15 @@ NavigableDialog {
     property bool hasCustomSettings: false
     property bool useGlobalSettings: false
     
+    // Store original global settings to restore on cancel
+    property var originalGlobalSettings: ({})
+    
     standardButtons: Dialog.Ok | Dialog.Cancel | Dialog.RestoreDefaults
     
     title: qsTr("Settings for %1").arg(clientName)
     
     width: 800
-    height: 650
+    height: 550
     
     Component.onCompleted: {
         // Connect to the reset signal
@@ -37,14 +40,85 @@ NavigableDialog {
     onOpened: {
         // Load client-specific settings when dialog opens
         if (clientUuid !== "") {
+            // Save current global settings before loading client settings
+            originalGlobalSettings = {
+                width: StreamingPreferences.width,
+                height: StreamingPreferences.height,
+                fps: StreamingPreferences.fps,
+                bitrateKbps: StreamingPreferences.bitrateKbps,
+                unlockBitrate: StreamingPreferences.unlockBitrate,
+                autoAdjustBitrate: StreamingPreferences.autoAdjustBitrate,
+                enableVsync: StreamingPreferences.enableVsync,
+                gameOptimizations: StreamingPreferences.gameOptimizations,
+                playAudioOnHost: StreamingPreferences.playAudioOnHost,
+                multiController: StreamingPreferences.multiController,
+                enableMdns: StreamingPreferences.enableMdns,
+                quitAppAfter: StreamingPreferences.quitAppAfter,
+                absoluteMouseMode: StreamingPreferences.absoluteMouseMode,
+                absoluteTouchMode: StreamingPreferences.absoluteTouchMode,
+                framePacing: StreamingPreferences.framePacing,
+                connectionWarnings: StreamingPreferences.connectionWarnings,
+                configurationWarnings: StreamingPreferences.configurationWarnings,
+                richPresence: StreamingPreferences.richPresence,
+                gamepadMouse: StreamingPreferences.gamepadMouse,
+                detectNetworkBlocking: StreamingPreferences.detectNetworkBlocking,
+                showPerformanceOverlay: StreamingPreferences.showPerformanceOverlay,
+                swapMouseButtons: StreamingPreferences.swapMouseButtons,
+                muteOnFocusLoss: StreamingPreferences.muteOnFocusLoss,
+                backgroundGamepad: StreamingPreferences.backgroundGamepad,
+    onRejected: {
+        // Restore original global settings
+        if (clientUuid !== "" && originalGlobalSettings) {
+            StreamingPreferences.width = originalGlobalSettings.width
+            StreamingPreferences.height = originalGlobalSettings.height
+            StreamingPreferences.fps = originalGlobalSettings.fps
+            StreamingPreferences.bitrateKbps = originalGlobalSettings.bitrateKbps
+            StreamingPreferences.unlockBitrate = originalGlobalSettings.unlockBitrate
+            StreamingPreferences.autoAdjustBitrate = originalGlobalSettings.autoAdjustBitrate
+            StreamingPreferences.enableVsync = originalGlobalSettings.enableVsync
+            StreamingPreferences.gameOptimizations = originalGlobalSettings.gameOptimizations
+            StreamingPreferences.playAudioOnHost = originalGlobalSettings.playAudioOnHost
+            StreamingPreferences.multiController = originalGlobalSettings.multiController
+            StreamingPreferences.enableMdns = originalGlobalSettings.enableMdns
+            StreamingPreferences.quitAppAfter = originalGlobalSettings.quitAppAfter
+            StreamingPreferences.absoluteMouseMode = originalGlobalSettings.absoluteMouseMode
+            StreamingPreferences.absoluteTouchMode = originalGlobalSettings.absoluteTouchMode
+            StreamingPreferences.framePacing = originalGlobalSettings.framePacing
+            StreamingPreferences.connectionWarnings = originalGlobalSettings.connectionWarnings
+            StreamingPreferences.configurationWarnings = originalGlobalSettings.configurationWarnings
+            StreamingPreferences.richPresence = originalGlobalSettings.richPresence
+            StreamingPreferences.gamepadMouse = originalGlobalSettings.gamepadMouse
+            StreamingPreferences.detectNetworkBlocking = originalGlobalSettings.detectNetworkBlocking
+            StreamingPreferences.showPerformanceOverlay = originalGlobalSettings.showPerformanceOverlay
+            StreamingPreferences.swapMouseButtons = originalGlobalSettings.swapMouseButtons
+            StreamingPreferences.muteOnFocusLoss = originalGlobalSettings.muteOnFocusLoss
+            StreamingPreferences.backgroundGamepad = originalGlobalSettings.backgroundGamepad
+            StreamingPreferences.reverseScrollDirection = originalGlobalSettings.reverseScrollDirection
+            StreamingPreferences.swapFaceButtons = originalGlobalSettings.swapFaceButtons
+            StreamingPreferences.keepAwake = originalGlobalSettings.keepAwake
+            StreamingPreferences.enableHdr = originalGlobalSettings.enableHdr
+            StreamingPreferences.enableYUV444 = originalGlobalSettings.enableYUV444
+            StreamingPreferences.audioConfig = originalGlobalSettings.audioConfig
+            StreamingPreferences.videoCodecConfig = originalGlobalSettings.videoCodecConfig
+            StreamingPreferences.videoDecoderSelection = originalGlobalSettings.videoDecoderSelection
+            StreamingPreferences.windowMode = originalGlobalSettings.windowMode
+            StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
+        }
+        StreamingPreferences.reload()
+    }           enableHdr: StreamingPreferences.enableHdr,
+                enableYUV444: StreamingPreferences.enableYUV444,
+                audioConfig: StreamingPreferences.audioConfig,
+                videoCodecConfig: StreamingPreferences.videoCodecConfig,
+                videoDecoderSelection: StreamingPreferences.videoDecoderSelection,
+                windowMode: StreamingPreferences.windowMode,
+                captureSysKeysMode: StreamingPreferences.captureSysKeysMode
+            }
+            
             hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
             useGlobalSettings = !hasCustomSettings
             
             if (hasCustomSettings) {
                 StreamingPreferences.loadForClient(clientUuid)
-            } else {
-                // Load global settings to start with
-                StreamingPreferences.reload()
             }
             updateUIFromPreferences()
         }
@@ -217,8 +291,7 @@ NavigableDialog {
         StreamingPreferences.showPerformanceOverlay = showPerformanceOverlayCheckbox.checked
     }
     
-    Flickable {
-        anchors.fill: parent
+    contentItem: Flickable {
         contentWidth: mainLayout.width
         contentHeight: mainLayout.height
         clip: true
