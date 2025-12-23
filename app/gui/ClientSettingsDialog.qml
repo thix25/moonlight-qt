@@ -66,6 +66,41 @@ NavigableDialog {
                 swapMouseButtons: StreamingPreferences.swapMouseButtons,
                 muteOnFocusLoss: StreamingPreferences.muteOnFocusLoss,
                 backgroundGamepad: StreamingPreferences.backgroundGamepad,
+                reverseScrollDirection: StreamingPreferences.reverseScrollDirection,
+                swapFaceButtons: StreamingPreferences.swapFaceButtons,
+                keepAwake: StreamingPreferences.keepAwake,
+                enableHdr: StreamingPreferences.enableHdr,
+                enableYUV444: StreamingPreferences.enableYUV444,
+                audioConfig: StreamingPreferences.audioConfig,
+                videoCodecConfig: StreamingPreferences.videoCodecConfig,
+                videoDecoderSelection: StreamingPreferences.videoDecoderSelection,
+                windowMode: StreamingPreferences.windowMode,
+                captureSysKeysMode: StreamingPreferences.captureSysKeysMode
+            }
+            
+            hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
+            useGlobalSettings = !hasCustomSettings
+            
+            if (hasCustomSettings) {
+                StreamingPreferences.loadForClient(clientUuid)
+            }
+            updateUIFromPreferences()
+        }
+    }
+    
+    onAccepted: {
+        // Only save settings if not using global settings
+        if (!useGlobalSettings && clientUuid !== "") {
+            updatePreferencesFromUI()
+            StreamingPreferences.saveForClient(clientUuid)
+        } else if (useGlobalSettings && hasCustomSettings && clientUuid !== "") {
+            // User switched to global settings, remove custom settings
+            StreamingPreferences.resetClientSettings(clientUuid)
+        }
+        // Reload global settings after saving
+        StreamingPreferences.reload()
+    }
+    
     onRejected: {
         // Restore original global settings
         if (clientUuid !== "" && originalGlobalSettings) {
@@ -104,41 +139,6 @@ NavigableDialog {
             StreamingPreferences.windowMode = originalGlobalSettings.windowMode
             StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
         }
-        StreamingPreferences.reload()
-    }           enableHdr: StreamingPreferences.enableHdr,
-                enableYUV444: StreamingPreferences.enableYUV444,
-                audioConfig: StreamingPreferences.audioConfig,
-                videoCodecConfig: StreamingPreferences.videoCodecConfig,
-                videoDecoderSelection: StreamingPreferences.videoDecoderSelection,
-                windowMode: StreamingPreferences.windowMode,
-                captureSysKeysMode: StreamingPreferences.captureSysKeysMode
-            }
-            
-            hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
-            useGlobalSettings = !hasCustomSettings
-            
-            if (hasCustomSettings) {
-                StreamingPreferences.loadForClient(clientUuid)
-            }
-            updateUIFromPreferences()
-        }
-    }
-    
-    onAccepted: {
-        // Only save settings if not using global settings
-        if (!useGlobalSettings && clientUuid !== "") {
-            updatePreferencesFromUI()
-            StreamingPreferences.saveForClient(clientUuid)
-        } else if (useGlobalSettings && hasCustomSettings && clientUuid !== "") {
-            // User switched to global settings, remove custom settings
-            StreamingPreferences.resetClientSettings(clientUuid)
-        }
-        // Reload global settings after saving
-        StreamingPreferences.reload()
-    }
-    
-    onRejected: {
-        // Reload global settings without saving
         StreamingPreferences.reload()
     }
     
