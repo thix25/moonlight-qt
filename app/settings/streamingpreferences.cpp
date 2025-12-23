@@ -318,6 +318,12 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
 
 void StreamingPreferences::save()
 {
+    // Don't save to global settings if we're currently viewing client-specific settings
+    if (!m_CurrentClientUuid.isEmpty()) {
+        qWarning() << "Attempted to save global settings while client settings are loaded for" << m_CurrentClientUuid;
+        return;
+    }
+
     QSettings settings;
 
     settings.setValue(SER_WIDTH, width);
