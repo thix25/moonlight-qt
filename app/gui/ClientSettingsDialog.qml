@@ -18,7 +18,7 @@ NavigableDialog {
     title: qsTr("Settings for %1").arg(clientName)
     
     width: 800
-    height: 600
+    height: 650
     
     Component.onCompleted: {
         // Connect to the reset signal
