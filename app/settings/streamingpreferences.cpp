@@ -104,6 +104,9 @@ void StreamingPreferences::reload()
 {
     QSettings settings;
 
+    // Clear client UUID when reloading global settings
+    m_CurrentClientUuid.clear();
+
     int defaultVer = settings.value(SER_DEFAULTVER, 0).toInt();
 
 #ifdef Q_OS_DARWIN
