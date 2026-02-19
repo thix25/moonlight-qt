@@ -1,0 +1,116 @@
+19-02-2026
+1. launch : x64 native tools commands prompt for VS 
+    then we need to have the qmake command recognise so do this (copy the line with the "" but not the -) : 
+    - "C:\ProgramData\Qt\6.10.1\msvc2022_64\bin\qtenv2.bat"
+    # to know the place to look. launch the terminal : Qt 6.10.1 (MSVC 64-bit)
+    # then we see the path : C:\ProgramData\Qt\6.10.1\msvc2022_64
+
+2. cd C:\BUILDS\Moonlight_QT\moonlight-qt
+
+3bis. do this if new things where pushed : git submodule update --init --recursive
+
+4. qmake moonlight-qt.pro
+5. nmake release
+
+## Here two scripts were modify (see old version)
+
+6. then run in cd C:\BUILDS\Moonlight_QT\moonlight-qt
+
+    ## Here is to clean the cache to take into accountthe new changes
+    ## I don't know if it is ok or if things need to be added or not feel free to add things if needed. 
+
+    cd C:\BUILDS\Moonlight_QT\moonlight-qt\app
+    del /Q qml_qmlcache.qrc
+    del /Q release\qmlcache_loader.cpp
+    del /Q release\qrc_qml_qmlcache.cpp
+    del /Q release\gui_ClientSettingsDialog_qml.cpp
+    del /Q release\gui_*.cpp
+    cd ..
+
+7.  scripts\build-arch.bat release
+
+8. Then the portable version is located in
+
+    - Moonlight.msi (25 MB)	build\build-x64-release\	MSI installer — this is what you want to    install on other PCs
+    - MoonlightPortable-x64-6.3.0.zip (33 MB)	build\installer-x64-release\	Portable version (no    install)
+    - Moonlight.exe (2.6 MB)	build\deploy-x64-release\	The app binary alone
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+OLD : 
+
+
+launch : x64 native tools commands prompt for VS : 
+
+cd C:\BUILDS\Moonlight_QT\moonlight-qt
+
+qmake moonlight-qt.pro
+nmake release
+
+After : 
+
+NOT WORKING : 
+"
+If you want a redistributable bundle (to copy to other PCs), from the repo root:
+cd C:\BUILDS\Moonlight_QT\moonlight-qt
+scripts\build-arch.bat release
+scripts\generate-bundle.bat release
+"
+
+TRY to change the script to use nmake:
+
+line 150 : %SOURCE_ROOT%\scripts\jom.exe %BUILD_CONFIG%
+replace by : nmake %BUILD_CONFIG%
+
+then change generate-mocs.ps1 to this : 
+
+$MocFiles = @(
+    @{
+        Source = "$SourceDir\backend\boxartmanager.cpp"
+        Output = "$SourceDir\backend\boxartmanager.moc"
+        Includes = @("-I$SourceDir", "-I$SourceDir\backend")
+    },
+    @{
+        Source = "$SourceDir\backend\computermanager.cpp"
+        Output = "$SourceDir\backend\computermanager.moc"
+        Includes = @("-I$SourceDir", "-I$SourceDir\backend")
+    },
+    @{
+        Source = "$SourceDir\gui\computermodel.cpp"
+        Output = "$SourceDir\gui\computermodel.moc"
+        Includes = @("-I$SourceDir", "-I$SourceDir\gui")
+    }
+
+
+    then run in cd C:\BUILDS\Moonlight_QT\moonlight-qt
+
+    cd C:\BUILDS\Moonlight_QT\moonlight-qt\app
+    del /Q qml_qmlcache.qrc
+    del /Q release\qmlcache_loader.cpp
+    del /Q release\qrc_qml_qmlcache.cpp
+    del /Q release\gui_ClientSettingsDialog_qml.cpp
+    del /Q release\gui_*.cpp
+    cd ..
+
+    scripts\build-arch.bat release
+    scripts\generate-bundle.bat release
