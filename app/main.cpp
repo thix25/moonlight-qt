@@ -51,6 +51,7 @@
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
+#include "settings/gamepadmapping.h"
 #include "gui/sdlgamepadkeynavigation.h"
 
 #if defined(Q_OS_WIN32)
@@ -846,6 +847,13 @@ int main(int argc, char *argv[])
                                                    [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
                                                        return StreamingPreferences::get(qmlEngine);
                                                    });
+    qmlRegisterSingletonType<GamepadMapping>("GamepadMapping", 1, 0,
+                                             "GamepadMapping",
+                                             [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
+                                                 GamepadMapping* instance = GamepadMapping::get();
+                                                 QQmlEngine::setObjectOwnership(instance, QQmlEngine::CppOwnership);
+                                                 return instance;
+                                             });
 
     // Create the identity manager on the main thread
     IdentityManager::get();

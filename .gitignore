@@ -1,8 +1,66 @@
+# ==============================================================
+#  Qt / qmake project user files
+# ==============================================================
 *pro.user
 
-
+# ==============================================================
+#  IDE / editor directories
+# ==============================================================
 **/.vs/
 .vscode/
-build/
+
+# ==============================================================
+#  qmake generated files
+# ==============================================================
+.qmake.cache
+.qmake.stash
+Makefile
+Makefile.Debug
+Makefile.Release
+**/Makefile
+**/Makefile.Debug
+**/Makefile.Release
 config.tests/*/.qmake.stash
 config.tests/*/Makefile
+config.log
+
+# ==============================================================
+#  Generated resource / moc / QML cache files
+# ==============================================================
+**/*.moc
+**/moc_*.cpp
+**/moc_*.h
+**/moc_predefs.h
+**/qrc_*.cpp
+**/qmlcache_loader.cpp
+**/qml_qmlcache.qrc
+**/gui_*_qml.cpp
+**/*_resource.rc
+
+# ==============================================================
+#  Build output directories (debug / release)
+# ==============================================================
+build/
+**/debug/
+**/release/
+
+# ==============================================================
+#  Compiled objects, libraries, executables, symbols
+# ==============================================================
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.exe
+*.exp
+*.pdb
+*.vc.pdb
+*.res
+*.ilk
+
+# ==============================================================
+#  Personal / local scripts (optional – remove if you want
+#  build-personal.bat tracked)
+# ==============================================================
+scripts/build-personal.bat
