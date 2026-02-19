@@ -58,9 +58,3 @@ build/
 *.vc.pdb
 *.res
 *.ilk
-
-# ==============================================================
-#  Personal / local scripts (optional – remove if you want
-#  build-personal.bat tracked)
-# ==============================================================
-scripts/build-personal.bat
