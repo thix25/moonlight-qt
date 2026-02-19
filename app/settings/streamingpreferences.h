@@ -4,6 +4,8 @@
 #include <QRect>
 #include <QQmlEngine>
 
+class QSettings;
+
 class StreamingPreferences : public QObject
 {
     Q_OBJECT
@@ -17,6 +19,13 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+
+    // Per-client settings management
+    Q_INVOKABLE void loadForClient(QString clientUuid);
+    Q_INVOKABLE void saveForClient(QString clientUuid);
+    Q_INVOKABLE void resetClientSettings(QString clientUuid);
+    Q_INVOKABLE bool hasClientSettings(QString clientUuid);
+    Q_INVOKABLE QString currentClientUuid() const { return m_CurrentClientUuid; }
 
     enum AudioConfig
     {
@@ -231,5 +240,6 @@ private:
     QString getSuffixFromLanguage(Language lang);
 
     QQmlEngine* m_QmlEngine;
+    QString m_CurrentClientUuid;
 };
 
