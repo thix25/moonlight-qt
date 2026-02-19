@@ -18,7 +18,7 @@ rem    - Qt env must be set up first, e.g.:
 rem      "C:\ProgramData\Qt\6.10.1\msvc2022_64\bin\qtenv2.bat"
 rem ============================================================
 
-set SOURCE_ROOT=C:\BUILDS\Moonlight_QT\moonlight-qt
+set SOURCE_ROOT=C:\BUILDS\To-Delete-Moonlight_QT\moonlight-qt
 set VERSION=%~1
 
 echo.
