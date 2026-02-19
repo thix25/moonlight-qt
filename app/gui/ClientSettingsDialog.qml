@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.2
 
 import StreamingPreferences 1.0
 import SystemProperties 1.0
+import GamepadMapping 1.0
 
 NavigableDialog {
     id: clientSettingsDialog
@@ -653,6 +654,115 @@ NavigableDialog {
                             text: qsTr("Process gamepad input when Moonlight is in the background")
                             font.pointSize: 12
                             visible: SystemProperties.hasDesktopEnvironment
+                        }
+
+                        // Per-client controller assignment
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Controller Player Assignment")
+                            font.pointSize: 12
+                            font.bold: true
+                            Layout.topMargin: 10
+                        }
+
+                        CheckBox {
+                            id: clientMappingOverrideCheckbox
+                            text: qsTr("Use per-PC controller assignments (overrides global)")
+                            font.pointSize: 11
+                            checked: clientUuid !== "" ? GamepadMapping.isClientMappingEnabled(clientUuid) : false
+                            onCheckedChanged: {
+                                if (clientUuid !== "") {
+                                    GamepadMapping.setClientMappingEnabled(clientUuid, checked)
+                                }
+                                clientControllerContent.enabled = checked
+                            }
+                        }
+
+                        ColumnLayout {
+                            id: clientControllerContent
+                            Layout.fillWidth: true
+                            spacing: 5
+                            enabled: clientMappingOverrideCheckbox.checked
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Assign each controller to a player number for this PC. When disabled, the global assignments are used.")
+                                font.pointSize: 10
+                                wrapMode: Text.Wrap
+                                color: clientControllerContent.enabled ? "lightgray" : "gray"
+                            }
+
+                            Button {
+                                text: qsTr("Refresh Controllers")
+                                font.pointSize: 10
+                                onClicked: {
+                                    clientControllerRepeater.model = GamepadMapping.getConnectedGamepads()
+                                }
+                            }
+
+                            Repeater {
+                                id: clientControllerRepeater
+                                model: GamepadMapping.getConnectedGamepads()
+
+                                delegate: RowLayout {
+                                    spacing: 10
+                                    Layout.fillWidth: true
+
+                                    Label {
+                                        text: modelData.name
+                                        font.pointSize: 11
+                                        Layout.preferredWidth: 250
+                                        elide: Text.ElideRight
+
+                                        ToolTip.delay: 1000
+                                        ToolTip.timeout: 5000
+                                        ToolTip.visible: clientMouseArea.containsMouse
+                                        ToolTip.text: qsTr("GUID: ") + modelData.guid
+
+                                        MouseArea {
+                                            id: clientMouseArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                        }
+                                    }
+
+                                    AutoResizingComboBox {
+                                        textRole: "text"
+                                        model: ListModel {
+                                            ListElement { text: qsTr("Automatic"); val: -1 }
+                                            ListElement { text: qsTr("Player 1"); val: 0 }
+                                            ListElement { text: qsTr("Player 2"); val: 1 }
+                                            ListElement { text: qsTr("Player 3"); val: 2 }
+                                            ListElement { text: qsTr("Player 4"); val: 3 }
+                                        }
+
+                                        Component.onCompleted: {
+                                            var saved = GamepadMapping.getClientMapping(clientUuid, modelData.guid)
+                                            currentIndex = 0
+                                            for (var i = 0; i < model.count; i++) {
+                                                if (model.get(i).val === saved) {
+                                                    currentIndex = i
+                                                    break
+                                                }
+                                            }
+                                        }
+
+                                        onActivated: {
+                                            GamepadMapping.setClientMapping(clientUuid, modelData.guid, model.get(currentIndex).val)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("No controllers detected. Connect a controller and click 'Refresh Controllers'.")
+                                font.pointSize: 10
+                                font.italic: true
+                                color: "gray"
+                                visible: clientControllerRepeater.count === 0
+                                wrapMode: Text.Wrap
+                            }
                         }
                     }
                 }

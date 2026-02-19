@@ -9,6 +9,7 @@ struct GamepadState {
     SDL_GameController* controller;
     SDL_JoystickID jsId;
     short index;
+    char guid[33]; // Persisted across disconnect/reconnect for stable player assignment
 
 #if !SDL_VERSION_ATLEAST(2, 0, 9)
     SDL_Haptic* haptic;
@@ -84,9 +85,12 @@ struct DualSenseOutputReport{
 class SdlInputHandler
 {
 public:
-    explicit SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight);
+    explicit SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight, const QString& clientUuid = QString());
 
     ~SdlInputHandler();
+
+    // Get the client UUID this handler is associated with
+    QString clientUuid() const { return m_ClientUuid; }
 
     void setWindow(SDL_Window* window);
 
@@ -221,6 +225,7 @@ private:
     QString m_OldIgnoreDevices;
     QString m_OldIgnoreDevicesExcept;
     QStringList m_IgnoreDeviceGuids;
+    QString m_ClientUuid;
     StreamingPreferences::CaptureSysKeysMode m_CaptureSystemKeysMode;
     int m_MouseCursorCapturedVisibilityState;
 

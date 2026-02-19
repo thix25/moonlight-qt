@@ -7,6 +7,7 @@ import StreamingPreferences 1.0
 import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
 import SystemProperties 1.0
+import GamepadMapping 1.0
 
 Flickable {
     id: settingsPage
@@ -1536,6 +1537,98 @@ Flickable {
                     ToolTip.timeout: 5000
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Allows Moonlight to capture gamepad inputs even if it's not the current window in focus")
+                }
+
+                // Controller Player Assignment section
+                Label {
+                    width: parent.width
+                    text: qsTr("Controller Player Assignment (Global)")
+                    font.pointSize: 12
+                    font.bold: true
+                    topPadding: 10
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Assign each connected controller to a specific player number. This prevents controllers from swapping players when they reconnect. Set to 'Automatic' to use the default behavior.")
+                    font.pointSize: 10
+                    wrapMode: Text.Wrap
+                    color: "lightgray"
+                }
+
+                Button {
+                    text: qsTr("Refresh Connected Controllers")
+                    font.pointSize: 11
+                    onClicked: {
+                        controllerAssignmentRepeater.model = GamepadMapping.getConnectedGamepads()
+                    }
+                }
+
+                Repeater {
+                    id: controllerAssignmentRepeater
+                    model: GamepadMapping.getConnectedGamepads()
+
+                    delegate: Row {
+                        spacing: 10
+                        width: parent.width
+
+                        Label {
+                            text: modelData.name
+                            font.pointSize: 11
+                            width: parent.width * 0.5
+                            elide: Text.ElideRight
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            ToolTip.delay: 1000
+                            ToolTip.timeout: 5000
+                            ToolTip.visible: mouseArea.containsMouse
+                            ToolTip.text: qsTr("GUID: ") + modelData.guid
+
+                            MouseArea {
+                                id: mouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
+                        }
+
+                        AutoResizingComboBox {
+                            id: playerAssignCombo
+                            textRole: "text"
+                            model: ListModel {
+                                ListElement { text: qsTr("Automatic"); val: -1 }
+                                ListElement { text: qsTr("Player 1"); val: 0 }
+                                ListElement { text: qsTr("Player 2"); val: 1 }
+                                ListElement { text: qsTr("Player 3"); val: 2 }
+                                ListElement { text: qsTr("Player 4"); val: 3 }
+                            }
+
+                            Component.onCompleted: {
+                                var saved = GamepadMapping.getGlobalMapping(modelData.guid)
+                                currentIndex = 0
+                                for (var i = 0; i < model.count; i++) {
+                                    if (model.get(i).val === saved) {
+                                        currentIndex = i
+                                        break
+                                    }
+                                }
+                            }
+
+                            onActivated: {
+                                GamepadMapping.setGlobalMapping(modelData.guid, model.get(currentIndex).val)
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("No controllers detected. Connect a controller and click 'Refresh'.")
+                    font.pointSize: 10
+                    font.italic: true
+                    color: "gray"
+                    visible: controllerAssignmentRepeater.count === 0
+                    wrapMode: Text.Wrap
                 }
             }
         }
