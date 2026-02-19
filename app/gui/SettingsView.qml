@@ -270,6 +270,12 @@ Flickable {
                                 video_height: "2160"
                                 is_custom: false
                             }
+                            ListElement {
+                                text: qsTr("8K")
+                                video_width: "7680"
+                                video_height: "4320"
+                                is_custom: false
+                            }
                         }
 
                         function updateBitrateForSelection() {
@@ -647,6 +653,26 @@ Flickable {
                             ListElement {
                                 text: qsTr("60 FPS")
                                 video_fps: "60"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("90 FPS")
+                                video_fps: "90"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("100 FPS")
+                                video_fps: "100"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("120 FPS")
+                                video_fps: "120"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("144 FPS")
+                                video_fps: "144"
                                 is_custom: false
                             }
                         }
