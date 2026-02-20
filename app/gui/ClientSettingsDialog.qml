@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.2
 
 import StreamingPreferences 1.0
 import SystemProperties 1.0
+import GamepadMapping 1.0
 
 NavigableDialog {
     id: clientSettingsDialog
@@ -653,6 +654,135 @@ NavigableDialog {
                             text: qsTr("Process gamepad input when Moonlight is in the background")
                             font.pointSize: 12
                             visible: SystemProperties.hasDesktopEnvironment
+                        }
+
+                        // Per-client controller assignment
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Controller Player Assignment")
+                            font.pointSize: 12
+                            font.bold: true
+                            Layout.topMargin: 10
+                        }
+
+                        CheckBox {
+                            id: clientMappingOverrideCheckbox
+                            text: qsTr("Use per-PC controller assignments (overrides global)")
+                            font.pointSize: 11
+                            checked: clientUuid !== "" ? GamepadMapping.isClientMappingEnabled(clientUuid) : false
+                            onCheckedChanged: {
+                                if (clientUuid !== "") {
+                                    GamepadMapping.setClientMappingEnabled(clientUuid, checked)
+                                }
+                                clientControllerContent.enabled = checked
+                            }
+                        }
+
+                        ColumnLayout {
+                            id: clientControllerContent
+                            Layout.fillWidth: true
+                            spacing: 5
+                            enabled: clientMappingOverrideCheckbox.checked
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Assign each controller to a player number for this PC. When disabled, the global assignments are used.")
+                                font.pointSize: 10
+                                wrapMode: Text.Wrap
+                                color: clientControllerContent.enabled ? "lightgray" : "gray"
+                            }
+
+                            Button {
+                                text: qsTr("Refresh Controllers")
+                                font.pointSize: 10
+                                onClicked: {
+                                    clientControllerRepeater.model = GamepadMapping.getConnectedGamepads()
+                                }
+                            }
+
+                            Repeater {
+                                id: clientControllerRepeater
+                                model: GamepadMapping.getConnectedGamepads()
+
+                                delegate: ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    // Separator line between controllers
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: 1
+                                        color: "#444444"
+                                        visible: index > 0
+                                    }
+
+                                    RowLayout {
+                                        spacing: 10
+                                        Layout.fillWidth: true
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 1
+
+                                            Label {
+                                                text: modelData.name
+                                                font.pointSize: 11
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Label {
+                                                text: "GUID: " + modelData.guid
+                                                font.pointSize: 8
+                                                font.family: "Courier New"
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                                color: "#999999"
+                                            }
+                                        }
+
+                                        AutoResizingComboBox {
+                                            id: clientPlayerAssignCombo
+                                            textRole: "text"
+                                            font.pointSize: 11
+                                            implicitWidth: Math.max(desiredWidth, 150)
+                                            model: ListModel {
+                                                ListElement { text: qsTr("Automatic"); val: -1 }
+                                                ListElement { text: qsTr("Player 1"); val: 0 }
+                                                ListElement { text: qsTr("Player 2"); val: 1 }
+                                                ListElement { text: qsTr("Player 3"); val: 2 }
+                                                ListElement { text: qsTr("Player 4"); val: 3 }
+                                            }
+
+                                            Component.onCompleted: {
+                                                recalculateWidth()
+                                                var saved = GamepadMapping.getClientMapping(clientUuid, modelData.guid)
+                                                currentIndex = 0
+                                                for (var i = 0; i < model.count; i++) {
+                                                    if (model.get(i).val === saved) {
+                                                        currentIndex = i
+                                                        break
+                                                    }
+                                                }
+                                            }
+
+                                            onActivated: {
+                                                GamepadMapping.setClientMapping(clientUuid, modelData.guid, model.get(currentIndex).val)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("No controllers detected. Connect a controller and click 'Refresh Controllers'.")
+                                font.pointSize: 10
+                                font.italic: true
+                                color: "gray"
+                                visible: clientControllerRepeater.count === 0
+                                wrapMode: Text.Wrap
+                            }
                         }
                     }
                 }

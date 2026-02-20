@@ -1,11 +1,37 @@
 # Script to generate moc files for .cpp files that include them
 # This is a workaround for qmake not properly detecting in-source moc requirements
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File generate-mocs.ps1 -SourceRoot <path> [-QtBinDir <path>]
+#
+# Parameters:
+#   -SourceRoot  Root of the moonlight-qt repo (e.g. C:\BUILDS\Moonlight_QT\moonlight-qt)
+#   -QtBinDir    Qt bin directory (default: auto-detected via 'where qmake')
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$SourceRoot,
+
+    [Parameter(Mandatory=$false)]
+    [string]$QtBinDir
+)
 
 $ErrorActionPreference = "Stop"
 
-$QtMoc = "C:\ProgramData\Qt\6.10.1\msvc2022_64\bin\moc.exe"
-$BuildDir = "C:\BUILDS\Moonlight_QT\moonlight-qt\build\build-x64-release\app"
-$SourceDir = "C:\BUILDS\Moonlight_QT\moonlight-qt\app"
+# Auto-detect Qt bin directory if not provided
+if (-not $QtBinDir) {
+    $qmakePath = (Get-Command qmake -ErrorAction SilentlyContinue).Source
+    if ($qmakePath) {
+        $QtBinDir = Split-Path -Parent $qmakePath
+    } else {
+        Write-Error "Qt bin directory not found. Pass -QtBinDir or ensure qmake is on PATH."
+        exit 1
+    }
+}
+
+$QtRoot = Split-Path -Parent $QtBinDir
+$QtMoc = Join-Path $QtBinDir "moc.exe"
+$SourceDir = Join-Path $SourceRoot "app"
 
 $MocFiles = @(
     @{
@@ -25,11 +51,12 @@ $MocFiles = @(
     }
 )
 
+$QtInclude = Join-Path $QtRoot "include"
 $CommonIncludes = @(
-    "-IC:\ProgramData\Qt\6.10.1\msvc2022_64\include",
-    "-IC:\ProgramData\Qt\6.10.1\msvc2022_64\include\QtCore",
-    "-IC:\ProgramData\Qt\6.10.1\msvc2022_64\include\QtNetwork",
-    "-IC:\ProgramData\Qt\6.10.1\msvc2022_64\include\QtGui"
+    "-I$QtInclude",
+    "-I$QtInclude\QtCore",
+    "-I$QtInclude\QtNetwork",
+    "-I$QtInclude\QtGui"
 )
 
 $CommonDefines = @(
