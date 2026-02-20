@@ -40,9 +40,9 @@ Item {
                 pcListView.currentIndex = 0
             }
         } else {
-            pcGrid.forceActiveFocus()
+            pcGridFlickable.forceActiveFocus()
             if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-                pcGrid.currentIndex = 0
+                pcGridFlickable.currentGridIndex = 0
             }
         }
     }
@@ -145,7 +145,15 @@ Item {
                     onActivated: {
                         computerModel.setSortMode(index)
                         if (showSections) pcListView.forceActiveFocus()
-                        else pcGrid.forceActiveFocus()
+                        else pcGridFlickable.forceActiveFocus()
+                    }
+
+                    // Refresh when model resets (e.g. after moveComputer auto-switches to custom)
+                    Connections {
+                        target: computerModel
+                        function onModelReset() {
+                            pcSortModeCombo.currentIndex = computerModel.getSortMode()
+                        }
                     }
                     ToolTip.text: qsTr("Sort order")
                     ToolTip.visible: hovered
@@ -164,7 +172,7 @@ Item {
                         computerModel.refreshSort()
                         // Transfer focus to the newly active view
                         if (showSections) pcListView.forceActiveFocus()
-                        else pcGrid.forceActiveFocus()
+                        else pcGridFlickable.forceActiveFocus()
                     }
                     ToolTip.text: showSections ? qsTr("Hide Sections") : qsTr("Show Sections (Online / Not Paired / Offline)")
                     ToolTip.visible: hovered
@@ -400,204 +408,324 @@ Item {
             Keys.onDownPressed: {
                 if (currentIndex < 0 && count > 0) currentIndex = 0
             }
+            Keys.onUpPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
+            }
+            Keys.onReturnPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
+            }
 
             ScrollBar.vertical: ScrollBar {}
         }
 
-        // ==================== FLAT GRID VIEW (no sections) ====================
-        CenteredGridView {
-            id: pcGrid
+        // ==================== GRID VIEW (with inline section headers) ====================
+        Flickable {
+            id: pcGridFlickable
             visible: !showSections
             Layout.fillWidth: true
             Layout.fillHeight: true
-            focus: !showSections
-            activeFocusOnTab: true
+            contentWidth: width
+            contentHeight: pcGridColumn.height
             clip: true
-            topMargin: 20
-            bottomMargin: 5
-            cellWidth: tileCellWidth
-            cellHeight: tileCellHeight
+            activeFocusOnTab: true
+            focus: !showSections
+            flickableDirection: Flickable.VerticalFlick
+            boundsBehavior: Flickable.OvershootBounds
 
-            Component.onCompleted: {
-                currentIndex = -1
+            // Track a virtual "current index" for gamepad navigation
+            property int currentGridIndex: -1
+            property int gridItemCount: computerModel.count()
+
+            function navigateGrid(delta) {
+                var newIdx = currentGridIndex + delta
+                if (newIdx >= 0 && newIdx < gridItemCount) {
+                    currentGridIndex = newIdx
+                    // Ensure the focused item is visible
+                    var item = pcGridRepeater.itemAt(newIdx)
+                    if (item) {
+                        var yPos = item.mapToItem(pcGridColumn, 0, 0).y
+                        if (yPos < contentY) contentY = Math.max(0, yPos - 20)
+                        else if (yPos + item.height > contentY + height) contentY = yPos + item.height - height + 20
+                    }
+                }
             }
 
-            model: computerModel
+            Keys.onDownPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                // Move down by items per row
+                var itemsPerRow = Math.max(1, Math.floor((width - 20) / tileCellWidth))
+                navigateGrid(itemsPerRow)
+            }
+            Keys.onUpPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                var itemsPerRow = Math.max(1, Math.floor((width - 20) / tileCellWidth))
+                navigateGrid(-itemsPerRow)
+            }
+            Keys.onRightPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                navigateGrid(1)
+            }
+            Keys.onLeftPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                navigateGrid(-1)
+            }
+            Keys.onReturnPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                var item = pcGridRepeater.itemAt(currentGridIndex)
+                if (item) item.clicked()
+            }
+            Keys.onEnterPressed: {
+                if (currentGridIndex < 0 && gridItemCount > 0) { currentGridIndex = 0; return }
+                var item = pcGridRepeater.itemAt(currentGridIndex)
+                if (item) item.clicked()
+            }
+            Keys.onMenuPressed: {
+                if (currentGridIndex >= 0) {
+                    var item = pcGridRepeater.itemAt(currentGridIndex)
+                    if (item) item.pressAndHold()
+                }
+            }
 
-            delegate: NavigableItemDelegate {
-                width: tileItemWidth
-                height: tileItemHeight
-                grid: pcGrid
+            Column {
+                id: pcGridColumn
+                width: parent.width
+                topPadding: 10
 
-                property alias pcContextMenu : pcContextMenuLoader.item
-
-                Image {
-                    id: pcIcon
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    source: "qrc:/res/desktop_windows-48px.svg"
-                    sourceSize {
-                        width: tileIconSize
-                        height: tileIconSize
+                Repeater {
+                    id: pcSectionRepeater
+                    model: {
+                        // Build ordered list of unique sections from the computerModel
+                        var sections = []
+                        var seen = {}
+                        for (var i = 0; i < computerModel.count(); i++) {
+                            var sec = computerModel.getSectionAt(i)
+                            if (!seen[sec]) {
+                                seen[sec] = true
+                                sections.push(sec)
+                            }
+                        }
+                        return sections
                     }
-                }
 
-                Image {
-                    id: stateIcon
-                    anchors.horizontalCenter: pcIcon.horizontalCenter
-                    anchors.verticalCenter: pcIcon.verticalCenter
-                    anchors.verticalCenterOffset: !model.online ? Math.round(-18 * tileScale) : Math.round(-16 * tileScale)
-                    visible: !model.statusUnknown && (!model.online || !model.paired)
-                    source: !model.online ? "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg" : "qrc:/res/baseline-lock-24px.svg"
-                    sourceSize {
-                        width: !model.online ? Math.round(75 * tileScale) : Math.round(70 * tileScale)
-                        height: !model.online ? Math.round(75 * tileScale) : Math.round(70 * tileScale)
+                    Column {
+                        width: pcGridColumn.width
+                        property string sectionName: modelData
+
+                        // Section header
+                        Rectangle {
+                            width: parent.width
+                            height: 40
+                            color: "transparent"
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 15
+
+                                Rectangle {
+                                    width: 12; height: 12; radius: 6
+                                    color: sectionName === qsTr("Online") ? "#4CAF50" :
+                                           sectionName === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                                }
+                                Label {
+                                    text: sectionName
+                                    font.pointSize: 16
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    verticalAlignment: Text.AlignVCenter
+                                    color: sectionName === qsTr("Online") ? "#4CAF50" :
+                                           sectionName === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    height: 1
+                                    color: "#555555"
+                                }
+                            }
+                        }
+
+                        // Grid of PCs for this section
+                        Flow {
+                            width: parent.width
+                            leftPadding: 10
+                            rightPadding: 10
+                            spacing: 10
+
+                            Repeater {
+                                id: pcGridRepeater
+                                model: {
+                                    // Collect indices for this section
+                                    var indices = []
+                                    for (var i = 0; i < computerModel.count(); i++) {
+                                        if (computerModel.getSectionAt(i) === sectionName) {
+                                            indices.push(i)
+                                        }
+                                    }
+                                    return indices
+                                }
+
+                                NavigableItemDelegate {
+                                    property int pcModelIndex: modelData
+                                    property var pcData: computerModel.data(computerModel.index(pcModelIndex, 0), 0) // trigger updates
+                                    width: tileItemWidth
+                                    height: tileItemHeight
+                                    grid: pcGridFlickable
+                                    highlighted: pcGridFlickable.activeFocus && pcGridFlickable.currentGridIndex === pcModelIndex
+
+                                    property alias pcContextMenu : pcCtxMenuLoader.item
+
+                                    Image {
+                                        id: gridPcIcon
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        source: "qrc:/res/desktop_windows-48px.svg"
+                                        sourceSize { width: tileIconSize; height: tileIconSize }
+                                    }
+
+                                    Image {
+                                        anchors.horizontalCenter: gridPcIcon.horizontalCenter
+                                        anchors.verticalCenter: gridPcIcon.verticalCenter
+                                        anchors.verticalCenterOffset: Math.round(-17 * tileScale)
+                                        visible: !computerModel.data(computerModel.index(pcModelIndex, 0), 261) && (!computerModel.data(computerModel.index(pcModelIndex, 0), 257) || !computerModel.data(computerModel.index(pcModelIndex, 0), 258))
+                                        source: !computerModel.data(computerModel.index(pcModelIndex, 0), 257) ? "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg" : "qrc:/res/baseline-lock-24px.svg"
+                                        sourceSize { width: Math.round(72 * tileScale); height: Math.round(72 * tileScale) }
+                                    }
+
+                                    Label {
+                                        text: computerModel.data(computerModel.index(pcModelIndex, 0), 256) || ""
+                                        width: parent.width
+                                        anchors.top: gridPcIcon.bottom
+                                        anchors.bottom: parent.bottom
+                                        font.pointSize: Math.round(36 * tileScale)
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.Wrap
+                                        elide: Text.ElideRight
+                                    }
+
+                                    onClicked: pcClicked(pcModelIndex,
+                                                          computerModel.data(computerModel.index(pcModelIndex, 0), 257),
+                                                          computerModel.data(computerModel.index(pcModelIndex, 0), 258),
+                                                          computerModel.data(computerModel.index(pcModelIndex, 0), 262),
+                                                          computerModel.data(computerModel.index(pcModelIndex, 0), 256),
+                                                          computerModel.data(computerModel.index(pcModelIndex, 0), 264))
+
+                                    BusyIndicator {
+                                        anchors.horizontalCenter: gridPcIcon.horizontalCenter
+                                        anchors.verticalCenter: gridPcIcon.verticalCenter
+                                        anchors.verticalCenterOffset: Math.round(-15 * tileScale)
+                                        width: Math.round(75 * tileScale)
+                                        height: Math.round(75 * tileScale)
+                                        visible: !!computerModel.data(computerModel.index(pcModelIndex, 0), 261)
+                                        running: visible
+                                    }
+
+                                    Loader {
+                                        id: pcCtxMenuLoader
+                                        asynchronous: true
+                                        sourceComponent: NavigableMenu {
+                                            id: pcCtxMenu
+
+                                            MenuItem {
+                                                text: qsTr("PC Status: %1").arg(
+                                                    computerModel.data(computerModel.index(pcModelIndex, 0), 257) ? qsTr("Online") : qsTr("Offline"))
+                                                font.bold: true
+                                                enabled: false
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("View All Apps")
+                                                onTriggered: {
+                                                    var component = Qt.createComponent("AppView.qml")
+                                                    var appView = component.createObject(stackView, {
+                                                        "computerUuid": computerModel.data(computerModel.index(pcModelIndex, 0), 264),
+                                                        "objectName": computerModel.data(computerModel.index(pcModelIndex, 0), 256),
+                                                        "showHiddenGames": true
+                                                    })
+                                                    stackView.push(appView)
+                                                }
+                                                visible: !!computerModel.data(computerModel.index(pcModelIndex, 0), 257) && !!computerModel.data(computerModel.index(pcModelIndex, 0), 258)
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Wake PC")
+                                                onTriggered: computerModel.wakeComputer(pcModelIndex)
+                                                visible: !computerModel.data(computerModel.index(pcModelIndex, 0), 257) && !!computerModel.data(computerModel.index(pcModelIndex, 0), 260)
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Test Network")
+                                                onTriggered: {
+                                                    computerModel.testConnectionForComputer(pcModelIndex)
+                                                    testConnectionDialog.open()
+                                                }
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("PC Settings")
+                                                onTriggered: {
+                                                    clientSettingsDialog.clientName = computerModel.data(computerModel.index(pcModelIndex, 0), 256)
+                                                    clientSettingsDialog.clientUuid = computerModel.data(computerModel.index(pcModelIndex, 0), 264)
+                                                    clientSettingsDialog.open()
+                                                }
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Rename PC")
+                                                onTriggered: {
+                                                    renamePcDialog.pcIndex = pcModelIndex
+                                                    renamePcDialog.originalName = computerModel.data(computerModel.index(pcModelIndex, 0), 256)
+                                                    renamePcDialog.open()
+                                                }
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Delete PC")
+                                                onTriggered: {
+                                                    deletePcDialog.pcIndex = pcModelIndex
+                                                    deletePcDialog.pcName = computerModel.data(computerModel.index(pcModelIndex, 0), 256)
+                                                    deletePcDialog.open()
+                                                }
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("View Details")
+                                                onTriggered: {
+                                                    showPcDetailsDialog.pcDetails = computerModel.data(computerModel.index(pcModelIndex, 0), 263)
+                                                    showPcDetailsDialog.open()
+                                                }
+                                            }
+
+                                            MenuSeparator { visible: computerModel.getSortMode() === 1 }
+
+                                            NavigableMenuItem {
+                                                text: qsTr("Move Up")
+                                                visible: computerModel.getSortMode() === 1
+                                                enabled: pcModelIndex > 0
+                                                onTriggered: computerModel.moveComputer(pcModelIndex, pcModelIndex - 1)
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Move Down")
+                                                visible: computerModel.getSortMode() === 1
+                                                enabled: pcModelIndex < computerModel.count() - 1
+                                                onTriggered: computerModel.moveComputer(pcModelIndex, pcModelIndex + 1)
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Move to Position...")
+                                                visible: computerModel.getSortMode() === 1
+                                                onTriggered: {
+                                                    movePcToPositionDialog.currentIndex = pcModelIndex
+                                                    movePcToPositionDialog.maxCount = computerModel.count()
+                                                    movePcToPositionDialog.open()
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    onPressAndHold: {
+                                        if (pcContextMenu.popup) pcContextMenu.popup()
+                                        else pcContextMenu.open()
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.RightButton
+                                        onClicked: parent.pressAndHold()
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-
-                BusyIndicator {
-                    id: statusUnknownSpinner
-                    anchors.horizontalCenter: pcIcon.horizontalCenter
-                    anchors.verticalCenter: pcIcon.verticalCenter
-                    anchors.verticalCenterOffset: Math.round(-15 * tileScale)
-                    width: Math.round(75 * tileScale)
-                    height: Math.round(75 * tileScale)
-                    visible: model.statusUnknown
-                    running: visible
-                }
-
-                Label {
-                    id: pcNameText
-                    text: model.name
-
-                    width: parent.width
-                    anchors.top: pcIcon.bottom
-                    anchors.bottom: parent.bottom
-                    font.pointSize: Math.round(36 * tileScale)
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideRight
-                }
-
-                Loader {
-                    id: pcContextMenuLoader
-                    asynchronous: true
-                    sourceComponent: NavigableMenu {
-                        id: pcContextMenu
-                        MenuItem {
-                            text: qsTr("PC Status: %1").arg(model.online ? qsTr("Online") : qsTr("Offline"))
-                            font.bold: true
-                            enabled: false
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("View All Apps")
-                            onTriggered: {
-                                var component = Qt.createComponent("AppView.qml")
-                                var appView = component.createObject(stackView, {"computerUuid": model.uuid, "objectName": model.name, "showHiddenGames": true})
-                                stackView.push(appView)
-                            }
-                            visible: model.online && model.paired
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("Wake PC")
-                            onTriggered: computerModel.wakeComputer(index)
-                            visible: !model.online && model.wakeable
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("Test Network")
-                            onTriggered: {
-                                computerModel.testConnectionForComputer(index)
-                                testConnectionDialog.open()
-                            }
-                        }
-
-                        NavigableMenuItem {
-                            text: qsTr("PC Settings")
-                            onTriggered: {
-                                clientSettingsDialog.clientName = model.name
-                                clientSettingsDialog.clientUuid = model.uuid
-                                clientSettingsDialog.open()
-                            }
-                        }
-
-                        NavigableMenuItem {
-                            text: qsTr("Rename PC")
-                            onTriggered: {
-                                renamePcDialog.pcIndex = index
-                                renamePcDialog.originalName = model.name
-                                renamePcDialog.open()
-                            }
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("Delete PC")
-                            onTriggered: {
-                                deletePcDialog.pcIndex = index
-                                deletePcDialog.pcName = model.name
-                                deletePcDialog.open()
-                            }
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("View Details")
-                            onTriggered: {
-                                showPcDetailsDialog.pcDetails = model.details
-                                showPcDetailsDialog.open()
-                            }
-                        }
-
-                        MenuSeparator { visible: computerModel.getSortMode() === 1 }
-
-                        NavigableMenuItem {
-                            text: qsTr("Move Up")
-                            visible: computerModel.getSortMode() === 1
-                            enabled: index > 0
-                            onTriggered: computerModel.moveComputer(index, index - 1)
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("Move Down")
-                            visible: computerModel.getSortMode() === 1
-                            enabled: index < computerModel.count() - 1
-                            onTriggered: computerModel.moveComputer(index, index + 1)
-                        }
-                        NavigableMenuItem {
-                            text: qsTr("Move to Position...")
-                            visible: computerModel.getSortMode() === 1
-                            onTriggered: {
-                                movePcToPositionDialog.currentIndex = index
-                                movePcToPositionDialog.maxCount = computerModel.count()
-                                movePcToPositionDialog.open()
-                            }
-                        }
-                    }
-                }
-
-                onClicked: {
-                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
-                }
-
-                onPressAndHold: {
-                    if (pcContextMenu.popup) {
-                        pcContextMenu.popup()
-                    }
-                    else {
-                        pcContextMenu.open()
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.RightButton;
-                    onClicked: {
-                        parent.pressAndHold()
-                    }
-                }
-
-                Keys.onMenuPressed: {
-                    pcContextMenu.open()
-                }
-
-                Keys.onDeletePressed: {
-                    deletePcDialog.pcIndex = index
-                    deletePcDialog.pcName = model.name
-                    deletePcDialog.open()
                 }
             }
 
@@ -609,7 +737,7 @@ Item {
     Row {
         anchors.centerIn: parent
         spacing: 5
-        visible: (showSections ? pcListView.count : pcGrid.count) === 0
+        visible: (showSections ? pcListView.count : computerModel.count()) === 0
 
         BusyIndicator {
             id: searchSpinner
@@ -847,14 +975,18 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         onOpened: {
-            pcPositionSpinBox.forceActiveFocus()
-            pcPositionSpinBox.value = currentIndex + 1
+            pcPositionField.text = String(currentIndex + 1)
+            pcPositionField.forceActiveFocus()
+            pcPositionField.selectAll()
         }
 
         onAccepted: {
-            var targetIndex = pcPositionSpinBox.value - 1
-            if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
-                computerModel.moveComputer(currentIndex, targetIndex)
+            var val = parseInt(pcPositionField.text)
+            if (!isNaN(val)) {
+                var targetIndex = val - 1
+                if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
+                    computerModel.moveComputer(currentIndex, targetIndex)
+                }
             }
         }
 
@@ -864,11 +996,12 @@ Item {
                 font.bold: true
             }
 
-            SpinBox {
-                id: pcPositionSpinBox
-                from: 1
-                to: movePcToPositionDialog.maxCount
+            TextField {
+                id: pcPositionField
                 Layout.fillWidth: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: movePcToPositionDialog.maxCount }
+                placeholderText: "1-" + movePcToPositionDialog.maxCount
 
                 Keys.onReturnPressed: movePcToPositionDialog.accept()
                 Keys.onEnterPressed: movePcToPositionDialog.accept()
