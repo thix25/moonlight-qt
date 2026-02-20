@@ -105,7 +105,7 @@ QString Path::getDataFilePath(QString fileName)
 void Path::initialize(bool portable)
 {
     if (portable) {
-        s_LogDir = QDir::currentPath();
+        s_LogDir = QDir::currentPath() + "/logs";
         s_BoxArtCacheDir = QDir::currentPath() + "/boxart";
         s_QmlCacheDir = QDir::currentPath() + "/qmlcache";
 

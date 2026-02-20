@@ -29,55 +29,45 @@ NavigableDialog {
         reset.connect(function() {
             // Reset to global defaults
             if (clientUuid !== "") {
+                // resetClientSettings() already calls reload() internally when UUID matches
                 StreamingPreferences.resetClientSettings(clientUuid)
                 hasCustomSettings = false
                 useGlobalSettings = true
-                StreamingPreferences.reload()
                 updateUIFromPreferences()
             }
         })
+
+        // Populate combo box models using enum constants for future-proofing
+        codecListModel.clear()
+        codecListModel.append({text: qsTr("Automatic"), val: StreamingPreferences.VCC_AUTO})
+        codecListModel.append({text: "H.264", val: StreamingPreferences.VCC_FORCE_H264})
+        codecListModel.append({text: "HEVC (H.265)", val: StreamingPreferences.VCC_FORCE_HEVC})
+        codecListModel.append({text: "AV1", val: StreamingPreferences.VCC_FORCE_AV1})
+
+        decoderListModel.clear()
+        decoderListModel.append({text: qsTr("Automatic (Recommended)"), val: StreamingPreferences.VDS_AUTO})
+        decoderListModel.append({text: qsTr("Force software decoding"), val: StreamingPreferences.VDS_FORCE_SOFTWARE})
+        decoderListModel.append({text: qsTr("Force hardware decoding"), val: StreamingPreferences.VDS_FORCE_HARDWARE})
+
+        windowModeListModel.clear()
+        windowModeListModel.append({text: qsTr("Fullscreen"), val: StreamingPreferences.WM_FULLSCREEN})
+        windowModeListModel.append({text: qsTr("Borderless windowed"), val: StreamingPreferences.WM_FULLSCREEN_DESKTOP})
+        windowModeListModel.append({text: qsTr("Windowed"), val: StreamingPreferences.WM_WINDOWED})
+
+        audioListModel.clear()
+        audioListModel.append({text: qsTr("Stereo"), val: StreamingPreferences.AC_STEREO})
+        audioListModel.append({text: qsTr("5.1 surround sound"), val: StreamingPreferences.AC_51_SURROUND})
+        audioListModel.append({text: qsTr("7.1 surround sound"), val: StreamingPreferences.AC_71_SURROUND})
+
+        captureSysKeysModeListModel.clear()
+        captureSysKeysModeListModel.append({text: qsTr("in fullscreen"), val: StreamingPreferences.CSK_FULLSCREEN})
+        captureSysKeysModeListModel.append({text: qsTr("always"), val: StreamingPreferences.CSK_ALWAYS})
     }
     
     onOpened: {
-        // Load client-specific settings when dialog opens
         if (clientUuid !== "") {
-            // Save current global settings before loading client settings
-            originalGlobalSettings = {
-                width: StreamingPreferences.width,
-                height: StreamingPreferences.height,
-                fps: StreamingPreferences.fps,
-                bitrateKbps: StreamingPreferences.bitrateKbps,
-                unlockBitrate: StreamingPreferences.unlockBitrate,
-                autoAdjustBitrate: StreamingPreferences.autoAdjustBitrate,
-                enableVsync: StreamingPreferences.enableVsync,
-                gameOptimizations: StreamingPreferences.gameOptimizations,
-                playAudioOnHost: StreamingPreferences.playAudioOnHost,
-                multiController: StreamingPreferences.multiController,
-                enableMdns: StreamingPreferences.enableMdns,
-                quitAppAfter: StreamingPreferences.quitAppAfter,
-                absoluteMouseMode: StreamingPreferences.absoluteMouseMode,
-                absoluteTouchMode: StreamingPreferences.absoluteTouchMode,
-                framePacing: StreamingPreferences.framePacing,
-                connectionWarnings: StreamingPreferences.connectionWarnings,
-                configurationWarnings: StreamingPreferences.configurationWarnings,
-                richPresence: StreamingPreferences.richPresence,
-                gamepadMouse: StreamingPreferences.gamepadMouse,
-                detectNetworkBlocking: StreamingPreferences.detectNetworkBlocking,
-                showPerformanceOverlay: StreamingPreferences.showPerformanceOverlay,
-                swapMouseButtons: StreamingPreferences.swapMouseButtons,
-                muteOnFocusLoss: StreamingPreferences.muteOnFocusLoss,
-                backgroundGamepad: StreamingPreferences.backgroundGamepad,
-                reverseScrollDirection: StreamingPreferences.reverseScrollDirection,
-                swapFaceButtons: StreamingPreferences.swapFaceButtons,
-                keepAwake: StreamingPreferences.keepAwake,
-                enableHdr: StreamingPreferences.enableHdr,
-                enableYUV444: StreamingPreferences.enableYUV444,
-                audioConfig: StreamingPreferences.audioConfig,
-                videoCodecConfig: StreamingPreferences.videoCodecConfig,
-                videoDecoderSelection: StreamingPreferences.videoDecoderSelection,
-                windowMode: StreamingPreferences.windowMode,
-                captureSysKeysMode: StreamingPreferences.captureSysKeysMode
-            }
+            // Snapshot all global settings at once (replaces manual field-by-field backup)
+            originalGlobalSettings = StreamingPreferences.snapshotSettings()
             
             hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
             useGlobalSettings = !hasCustomSettings
@@ -90,112 +80,70 @@ NavigableDialog {
     }
     
     onAccepted: {
-        // Only save settings if not using global settings
         if (!useGlobalSettings && clientUuid !== "") {
             updatePreferencesFromUI()
             StreamingPreferences.saveForClient(clientUuid)
-            // Restore original global settings after saving client settings
-            if (originalGlobalSettings) {
-                StreamingPreferences.width = originalGlobalSettings.width
-                StreamingPreferences.height = originalGlobalSettings.height
-                StreamingPreferences.fps = originalGlobalSettings.fps
-                StreamingPreferences.bitrateKbps = originalGlobalSettings.bitrateKbps
-                StreamingPreferences.unlockBitrate = originalGlobalSettings.unlockBitrate
-                StreamingPreferences.autoAdjustBitrate = originalGlobalSettings.autoAdjustBitrate
-                StreamingPreferences.enableVsync = originalGlobalSettings.enableVsync
-                StreamingPreferences.gameOptimizations = originalGlobalSettings.gameOptimizations
-                StreamingPreferences.playAudioOnHost = originalGlobalSettings.playAudioOnHost
-                StreamingPreferences.multiController = originalGlobalSettings.multiController
-                StreamingPreferences.enableMdns = originalGlobalSettings.enableMdns
-                StreamingPreferences.quitAppAfter = originalGlobalSettings.quitAppAfter
-                StreamingPreferences.absoluteMouseMode = originalGlobalSettings.absoluteMouseMode
-                StreamingPreferences.absoluteTouchMode = originalGlobalSettings.absoluteTouchMode
-                StreamingPreferences.framePacing = originalGlobalSettings.framePacing
-                StreamingPreferences.connectionWarnings = originalGlobalSettings.connectionWarnings
-                StreamingPreferences.configurationWarnings = originalGlobalSettings.configurationWarnings
-                StreamingPreferences.richPresence = originalGlobalSettings.richPresence
-                StreamingPreferences.gamepadMouse = originalGlobalSettings.gamepadMouse
-                StreamingPreferences.detectNetworkBlocking = originalGlobalSettings.detectNetworkBlocking
-                StreamingPreferences.showPerformanceOverlay = originalGlobalSettings.showPerformanceOverlay
-                StreamingPreferences.swapMouseButtons = originalGlobalSettings.swapMouseButtons
-                StreamingPreferences.muteOnFocusLoss = originalGlobalSettings.muteOnFocusLoss
-                StreamingPreferences.backgroundGamepad = originalGlobalSettings.backgroundGamepad
-                StreamingPreferences.reverseScrollDirection = originalGlobalSettings.reverseScrollDirection
-                StreamingPreferences.swapFaceButtons = originalGlobalSettings.swapFaceButtons
-                StreamingPreferences.keepAwake = originalGlobalSettings.keepAwake
-                StreamingPreferences.enableHdr = originalGlobalSettings.enableHdr
-                StreamingPreferences.enableYUV444 = originalGlobalSettings.enableYUV444
-                StreamingPreferences.audioConfig = originalGlobalSettings.audioConfig
-                StreamingPreferences.videoCodecConfig = originalGlobalSettings.videoCodecConfig
-                StreamingPreferences.videoDecoderSelection = originalGlobalSettings.videoDecoderSelection
-                StreamingPreferences.windowMode = originalGlobalSettings.windowMode
-                StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
-            }
         } else if (useGlobalSettings && hasCustomSettings && clientUuid !== "") {
             // User switched to global settings, remove custom settings
             StreamingPreferences.resetClientSettings(clientUuid)
         }
-        // Reload global settings after saving
-        StreamingPreferences.reload()
+        // Restore the original global settings (clears client UUID state and emits signals)
+        if (originalGlobalSettings) {
+            StreamingPreferences.restoreSettings(originalGlobalSettings)
+        }
     }
     
     onRejected: {
-        // Restore original global settings
+        // Restore the original global settings (clears client UUID state and emits signals)
         if (clientUuid !== "" && originalGlobalSettings) {
-            StreamingPreferences.width = originalGlobalSettings.width
-            StreamingPreferences.height = originalGlobalSettings.height
-            StreamingPreferences.fps = originalGlobalSettings.fps
-            StreamingPreferences.bitrateKbps = originalGlobalSettings.bitrateKbps
-            StreamingPreferences.unlockBitrate = originalGlobalSettings.unlockBitrate
-            StreamingPreferences.autoAdjustBitrate = originalGlobalSettings.autoAdjustBitrate
-            StreamingPreferences.enableVsync = originalGlobalSettings.enableVsync
-            StreamingPreferences.gameOptimizations = originalGlobalSettings.gameOptimizations
-            StreamingPreferences.playAudioOnHost = originalGlobalSettings.playAudioOnHost
-            StreamingPreferences.multiController = originalGlobalSettings.multiController
-            StreamingPreferences.enableMdns = originalGlobalSettings.enableMdns
-            StreamingPreferences.quitAppAfter = originalGlobalSettings.quitAppAfter
-            StreamingPreferences.absoluteMouseMode = originalGlobalSettings.absoluteMouseMode
-            StreamingPreferences.absoluteTouchMode = originalGlobalSettings.absoluteTouchMode
-            StreamingPreferences.framePacing = originalGlobalSettings.framePacing
-            StreamingPreferences.connectionWarnings = originalGlobalSettings.connectionWarnings
-            StreamingPreferences.configurationWarnings = originalGlobalSettings.configurationWarnings
-            StreamingPreferences.richPresence = originalGlobalSettings.richPresence
-            StreamingPreferences.gamepadMouse = originalGlobalSettings.gamepadMouse
-            StreamingPreferences.detectNetworkBlocking = originalGlobalSettings.detectNetworkBlocking
-            StreamingPreferences.showPerformanceOverlay = originalGlobalSettings.showPerformanceOverlay
-            StreamingPreferences.swapMouseButtons = originalGlobalSettings.swapMouseButtons
-            StreamingPreferences.muteOnFocusLoss = originalGlobalSettings.muteOnFocusLoss
-            StreamingPreferences.backgroundGamepad = originalGlobalSettings.backgroundGamepad
-            StreamingPreferences.reverseScrollDirection = originalGlobalSettings.reverseScrollDirection
-            StreamingPreferences.swapFaceButtons = originalGlobalSettings.swapFaceButtons
-            StreamingPreferences.keepAwake = originalGlobalSettings.keepAwake
-            StreamingPreferences.enableHdr = originalGlobalSettings.enableHdr
-            StreamingPreferences.enableYUV444 = originalGlobalSettings.enableYUV444
-            StreamingPreferences.audioConfig = originalGlobalSettings.audioConfig
-            StreamingPreferences.videoCodecConfig = originalGlobalSettings.videoCodecConfig
-            StreamingPreferences.videoDecoderSelection = originalGlobalSettings.videoDecoderSelection
-            StreamingPreferences.windowMode = originalGlobalSettings.windowMode
-            StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
+            StreamingPreferences.restoreSettings(originalGlobalSettings)
         }
-        StreamingPreferences.reload()
     }
     
     function updateUIFromPreferences() {
-        // Video settings
-        resolutionComboBox.currentIndex = 0
+        // Video settings - find matching resolution or create custom entry
+        var resFound = false
         for (var i = 0; i < resolutionListModel.count; i++) {
-            if (resolutionListModel.get(i).width === StreamingPreferences.width &&
-                resolutionListModel.get(i).height === StreamingPreferences.height) {
+            if (resolutionListModel.get(i).is_custom) continue
+            if (parseInt(resolutionListModel.get(i).video_width) === StreamingPreferences.width &&
+                parseInt(resolutionListModel.get(i).video_height) === StreamingPreferences.height) {
                 resolutionComboBox.currentIndex = i
+                resFound = true
                 break
             }
         }
+        if (!resFound) {
+            // Update the custom entry with the saved custom resolution
+            for (i = 0; i < resolutionListModel.count; i++) {
+                if (resolutionListModel.get(i).is_custom) {
+                    resolutionListModel.setProperty(i, "video_width", "" + StreamingPreferences.width)
+                    resolutionListModel.setProperty(i, "video_height", "" + StreamingPreferences.height)
+                    resolutionListModel.setProperty(i, "text", qsTr("Custom (%1x%2)").arg(StreamingPreferences.width).arg(StreamingPreferences.height))
+                    resolutionComboBox.currentIndex = i
+                    break
+                }
+            }
+        }
         
-        fpsComboBox.currentIndex = 0
+        // FPS - find matching FPS or create custom entry
+        var fpsFound = false
         for (i = 0; i < fpsListModel.count; i++) {
-            if (fpsListModel.get(i).fps === StreamingPreferences.fps) {
+            if (fpsListModel.get(i).is_custom) continue
+            if (parseInt(fpsListModel.get(i).video_fps) === StreamingPreferences.fps) {
                 fpsComboBox.currentIndex = i
+                fpsFound = true
                 break
+            }
+        }
+        if (!fpsFound) {
+            // Update the custom entry with the saved custom FPS
+            for (i = 0; i < fpsListModel.count; i++) {
+                if (fpsListModel.get(i).is_custom) {
+                    fpsListModel.setProperty(i, "video_fps", "" + StreamingPreferences.fps)
+                    fpsListModel.setProperty(i, "text", qsTr("Custom (%1 FPS)").arg(StreamingPreferences.fps))
+                    fpsComboBox.currentIndex = i
+                    break
+                }
             }
         }
         
@@ -279,9 +227,9 @@ NavigableDialog {
     
     function updatePreferencesFromUI() {
         // Video settings
-        StreamingPreferences.width = resolutionListModel.get(resolutionComboBox.currentIndex).width
-        StreamingPreferences.height = resolutionListModel.get(resolutionComboBox.currentIndex).height
-        StreamingPreferences.fps = fpsListModel.get(fpsComboBox.currentIndex).fps
+        StreamingPreferences.width = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_width)
+        StreamingPreferences.height = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_height)
+        StreamingPreferences.fps = parseInt(fpsListModel.get(fpsComboBox.currentIndex).video_fps)
         StreamingPreferences.bitrateKbps = bitrateSlider.value
         StreamingPreferences.videoCodecConfig = codecListModel.get(codecComboBox.currentIndex).val
         StreamingPreferences.enableHdr = enableHdrCheckbox.checked
@@ -389,15 +337,133 @@ NavigableDialog {
                         
                         AutoResizingComboBox {
                             id: resolutionComboBox
+                            property int lastIndexValue: 0
                             Layout.fillWidth: true
                             textRole: "text"
                             model: ListModel {
                                 id: resolutionListModel
-                                ListElement { text: "720p (1280x720)"; width: 1280; height: 720 }
-                                ListElement { text: "1080p (1920x1080)"; width: 1920; height: 1080 }
-                                ListElement { text: "1440p (2560x1440)"; width: 2560; height: 1440 }
-                                ListElement { text: "4K (3840x2160)"; width: 3840; height: 2160 }
-                                ListElement { text: "8K (7680x4320)"; width: 7680; height: 4320 }
+                                ListElement { text: "720p (1280x720)"; video_width: "1280"; video_height: "720"; is_custom: false }
+                                ListElement { text: "1080p (1920x1080)"; video_width: "1920"; video_height: "1080"; is_custom: false }
+                                ListElement { text: "1440p (2560x1440)"; video_width: "2560"; video_height: "1440"; is_custom: false }
+                                ListElement { text: "4K (3840x2160)"; video_width: "3840"; video_height: "2160"; is_custom: false }
+                                ListElement { text: "8K (7680x4320)"; video_width: "7680"; video_height: "4320"; is_custom: false }
+                                ListElement { text: qsTr("Custom"); video_width: ""; video_height: ""; is_custom: true }
+                            }
+
+                            onActivated: {
+                                if (resolutionListModel.get(currentIndex).is_custom) {
+                                    customResolutionDialog.open()
+                                } else {
+                                    lastIndexValue = currentIndex
+                                }
+                            }
+
+                            NavigableDialog {
+                                id: customResolutionDialog
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+
+                                onOpened: {
+                                    customWidthField.forceActiveFocus()
+                                    if (customResolutionDialog.standardButton) {
+                                        customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                    }
+                                }
+
+                                onClosed: {
+                                    customWidthField.clear()
+                                    customHeightField.clear()
+                                }
+
+                                onRejected: {
+                                    resolutionComboBox.currentIndex = resolutionComboBox.lastIndexValue
+                                }
+
+                                function isInputValid() {
+                                    if ((!customWidthField.acceptableInput && customWidthField.text) ||
+                                            (!customHeightField.acceptableInput && customHeightField.text)) {
+                                        return false
+                                    }
+                                    if ((!customWidthField.text && !customWidthField.placeholderText) ||
+                                            (!customHeightField.text && !customHeightField.placeholderText)) {
+                                        return false
+                                    }
+                                    return true
+                                }
+
+                                onAccepted: {
+                                    if (!isInputValid()) {
+                                        reject()
+                                        return
+                                    }
+                                    var w = customWidthField.text ? customWidthField.text : customWidthField.placeholderText
+                                    var h = customHeightField.text ? customHeightField.text : customHeightField.placeholderText
+                                    for (var i = 0; i < resolutionListModel.count; i++) {
+                                        if (resolutionListModel.get(i).is_custom) {
+                                            resolutionListModel.setProperty(i, "video_width", w)
+                                            resolutionListModel.setProperty(i, "video_height", h)
+                                            resolutionListModel.setProperty(i, "text", qsTr("Custom (%1x%2)").arg(w).arg(h))
+                                            resolutionComboBox.currentIndex = i
+                                            resolutionComboBox.lastIndexValue = i
+                                            break
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Label {
+                                        text: qsTr("Custom resolutions are not officially supported by GeForce Experience, so it will not set your host display resolution. You will need to set it manually while in game.") + "\n\n" +
+                                              qsTr("Resolutions that are not supported by your client or host PC may cause streaming errors.") + "\n"
+                                        wrapMode: Label.WordWrap
+                                        Layout.maximumWidth: 300
+                                    }
+
+                                    Label {
+                                        text: qsTr("Enter a custom resolution:")
+                                        font.bold: true
+                                    }
+
+                                    RowLayout {
+                                        TextField {
+                                            id: customWidthField
+                                            maximumLength: 5
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: resolutionListModel.get(resolutionComboBox.currentIndex).video_width
+                                            validator: IntValidator { bottom: 256; top: 8192 }
+                                            focus: true
+
+                                            onTextChanged: {
+                                                if (customResolutionDialog.standardButton) {
+                                                    customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customResolutionDialog.accept()
+                                            Keys.onEnterPressed: customResolutionDialog.accept()
+                                        }
+
+                                        Label {
+                                            text: "x"
+                                            font.bold: true
+                                        }
+
+                                        TextField {
+                                            id: customHeightField
+                                            maximumLength: 5
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: resolutionListModel.get(resolutionComboBox.currentIndex).video_height
+                                            validator: IntValidator { bottom: 256; top: 8192 }
+
+                                            onTextChanged: {
+                                                if (customResolutionDialog.standardButton) {
+                                                    customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customResolutionDialog.accept()
+                                            Keys.onEnterPressed: customResolutionDialog.accept()
+                                        }
+                                    }
+                                }
                             }
                         }
                         
@@ -408,16 +474,100 @@ NavigableDialog {
                         
                         AutoResizingComboBox {
                             id: fpsComboBox
+                            property int lastIndexValue: 0
                             Layout.fillWidth: true
                             textRole: "text"
                             model: ListModel {
                                 id: fpsListModel
-                                ListElement { text: "30 FPS"; fps: 30 }
-                                ListElement { text: "60 FPS"; fps: 60 }
-                                ListElement { text: "90 FPS"; fps: 90 }
-                                ListElement { text: "100 FPS"; fps: 100 }
-                                ListElement { text: "120 FPS"; fps: 120 }
-                                ListElement { text: "144 FPS"; fps: 144 }
+                                ListElement { text: "30 FPS"; video_fps: "30"; is_custom: false }
+                                ListElement { text: "60 FPS"; video_fps: "60"; is_custom: false }
+                                ListElement { text: "90 FPS"; video_fps: "90"; is_custom: false }
+                                ListElement { text: "100 FPS"; video_fps: "100"; is_custom: false }
+                                ListElement { text: "120 FPS"; video_fps: "120"; is_custom: false }
+                                ListElement { text: "144 FPS"; video_fps: "144"; is_custom: false }
+                                ListElement { text: qsTr("Custom"); video_fps: ""; is_custom: true }
+                            }
+
+                            onActivated: {
+                                if (fpsListModel.get(currentIndex).is_custom) {
+                                    customFpsDialog.open()
+                                } else {
+                                    lastIndexValue = currentIndex
+                                }
+                            }
+
+                            NavigableDialog {
+                                id: customFpsDialog
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+
+                                onOpened: {
+                                    customFpsField.forceActiveFocus()
+                                    if (customFpsDialog.standardButton) {
+                                        customFpsDialog.standardButton(Dialog.Ok).enabled = customFpsDialog.isInputValid()
+                                    }
+                                }
+
+                                onClosed: {
+                                    customFpsField.clear()
+                                }
+
+                                onRejected: {
+                                    fpsComboBox.currentIndex = fpsComboBox.lastIndexValue
+                                }
+
+                                function isInputValid() {
+                                    if (!customFpsField.acceptableInput && customFpsField.text) {
+                                        return false
+                                    }
+                                    if (!customFpsField.text && !customFpsField.placeholderText) {
+                                        return false
+                                    }
+                                    return true
+                                }
+
+                                onAccepted: {
+                                    if (!isInputValid()) {
+                                        reject()
+                                        return
+                                    }
+                                    var fps = customFpsField.text ? customFpsField.text : customFpsField.placeholderText
+                                    for (var i = 0; i < fpsListModel.count; i++) {
+                                        if (fpsListModel.get(i).is_custom) {
+                                            fpsListModel.setProperty(i, "video_fps", fps)
+                                            fpsListModel.setProperty(i, "text", qsTr("Custom (%1 FPS)").arg(fps))
+                                            fpsComboBox.currentIndex = i
+                                            fpsComboBox.lastIndexValue = i
+                                            break
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Label {
+                                        text: qsTr("Enter a custom frame rate:")
+                                        font.bold: true
+                                    }
+
+                                    RowLayout {
+                                        TextField {
+                                            id: customFpsField
+                                            maximumLength: 4
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: fpsListModel.get(fpsComboBox.currentIndex).video_fps
+                                            validator: IntValidator { bottom: 10; top: 9999 }
+                                            focus: true
+
+                                            onTextChanged: {
+                                                if (customFpsDialog.standardButton) {
+                                                    customFpsDialog.standardButton(Dialog.Ok).enabled = customFpsDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customFpsDialog.accept()
+                                            Keys.onEnterPressed: customFpsDialog.accept()
+                                        }
+                                    }
+                                }
                             }
                         }
                         
@@ -432,10 +582,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: codecListModel
-                                ListElement { text: "Automatic"; val: 0 }
-                                ListElement { text: "H.264"; val: 1 }
-                                ListElement { text: "HEVC (H.265)"; val: 2 }
-                                ListElement { text: "AV1"; val: 4 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -450,9 +597,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: decoderListModel
-                                ListElement { text: "Automatic (Recommended)"; val: 0 }
-                                ListElement { text: "Force software decoding"; val: 2 }
-                                ListElement { text: "Force hardware decoding"; val: 1 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -469,9 +614,7 @@ NavigableDialog {
                             visible: SystemProperties.hasDesktopEnvironment
                             model: ListModel {
                                 id: windowModeListModel
-                                ListElement { text: "Fullscreen"; val: 0 }
-                                ListElement { text: "Borderless windowed"; val: 1 }
-                                ListElement { text: "Windowed"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -519,6 +662,24 @@ NavigableDialog {
                             to: unlockBitrateCheckbox.checked ? 500000 : 150000
                             stepSize: 500
                             value: 10000
+                            
+                            onMoved: {
+                                // Manual slider drag disables auto-adjust bitrate
+                                StreamingPreferences.autoAdjustBitrate = false
+                            }
+                        }
+                        
+                        Button {
+                            text: qsTr("Use Default Bitrate")
+                            font.pointSize: 10
+                            onClicked: {
+                                var selectedWidth = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_width)
+                                var selectedHeight = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_height)
+                                var selectedFps = parseInt(fpsListModel.get(fpsComboBox.currentIndex).video_fps)
+                                StreamingPreferences.autoAdjustBitrate = true
+                                bitrateSlider.value = StreamingPreferences.getDefaultBitrate(
+                                    selectedWidth, selectedHeight, selectedFps, enableYUV444Checkbox.checked)
+                            }
                         }
                     }
                 }
@@ -544,9 +705,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: audioListModel
-                                ListElement { text: "Stereo"; val: 0 }
-                                ListElement { text: "5.1 surround sound"; val: 1 }
-                                ListElement { text: "7.1 surround sound"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -614,8 +773,7 @@ NavigableDialog {
                             visible: captureSysKeysCheckbox.checked && SystemProperties.hasDesktopEnvironment
                             model: ListModel {
                                 id: captureSysKeysModeListModel
-                                ListElement { text: "in fullscreen"; val: 1 }
-                                ListElement { text: "always"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                     }
