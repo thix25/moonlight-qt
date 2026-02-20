@@ -482,7 +482,11 @@ void StreamingPreferences::loadForClient(QString clientUuid)
 
     emitAllChanged();
 
-    qInfo() << "Loaded client-specific settings for UUID:" << clientUuid;
+    qInfo() << "Loaded client-specific settings for UUID:" << clientUuid
+            << "resolution:" << width << "x" << height
+            << "fps:" << fps
+            << "codec:" << static_cast<int>(videoCodecConfig)
+            << "bitrate:" << bitrateKbps << "kbps";
 }
 
 void StreamingPreferences::saveForClient(QString clientUuid)
@@ -533,9 +537,20 @@ void StreamingPreferences::saveForClient(QString clientUuid)
 
     settings.endGroup();
 
+    // Force flush to ensure settings are persisted before restoreSettings() runs
+    settings.sync();
+
+    if (settings.status() != QSettings::NoError) {
+        qWarning() << "QSettings sync error after saving client settings! Status:" << settings.status();
+    }
+
     m_CurrentClientUuid = clientUuid;
 
-    qInfo() << "Saved client-specific settings for UUID:" << clientUuid;
+    qInfo() << "Saved client-specific settings for UUID:" << clientUuid
+            << "resolution:" << width << "x" << height
+            << "fps:" << fps
+            << "codec:" << static_cast<int>(videoCodecConfig)
+            << "bitrate:" << bitrateKbps << "kbps";
 }
 
 void StreamingPreferences::resetClientSettings(QString clientUuid)
@@ -561,13 +576,19 @@ void StreamingPreferences::resetClientSettings(QString clientUuid)
 bool StreamingPreferences::hasClientSettings(QString clientUuid)
 {
     if (clientUuid.isEmpty()) {
+        qWarning() << "hasClientSettings called with empty UUID";
         return false;
     }
 
     QSettings settings;
     settings.beginGroup("clients/" + clientUuid);
-    bool hasSettings = !settings.childKeys().isEmpty();
+    QStringList keys = settings.childKeys();
+    bool hasSettings = !keys.isEmpty();
     settings.endGroup();
+
+    qInfo() << "hasClientSettings for UUID:" << clientUuid
+            << "result:" << hasSettings
+            << "keys found:" << keys.count();
 
     return hasSettings;
 }
