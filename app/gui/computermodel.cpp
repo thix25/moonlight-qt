@@ -1,9 +1,12 @@
 #include "computermodel.h"
+#include "settings/streamingpreferences.h"
 
 #include <QThreadPool>
+#include <QSettings>
+#include <algorithm>
 
 ComputerModel::ComputerModel(QObject* object)
-    : QAbstractListModel(object) {}
+    : QAbstractListModel(object), m_ComputerManager(nullptr), m_SortMode(0) {}
 
 void ComputerModel::initialize(ComputerManager* computerManager)
 {
@@ -13,7 +16,15 @@ void ComputerModel::initialize(ComputerManager* computerManager)
     connect(m_ComputerManager, &ComputerManager::pairingCompleted,
             this, &ComputerModel::handlePairingCompleted);
 
+    // Load sort mode from preferences
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    m_SortMode = static_cast<int>(prefs->pcSortMode);
+
+    // Load custom order
+    loadCustomOrder();
+
     m_Computers = m_ComputerManager->getComputers();
+    sortComputers();
 }
 
 QVariant ComputerModel::data(const QModelIndex& index, int role) const
@@ -84,6 +95,14 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
     }
     case UuidRole:
         return computer->uuid;
+    case SectionRole: {
+        if (computer->state == NvComputer::CS_ONLINE && computer->pairState == NvComputer::PS_PAIRED)
+            return tr("Online");
+        else if (computer->state == NvComputer::CS_ONLINE && computer->pairState != NvComputer::PS_PAIRED)
+            return tr("Not Paired");
+        else
+            return tr("Offline");
+    }
     default:
         return QVariant();
     }
@@ -113,6 +132,7 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[ServerSupportedRole] = "serverSupported";
     names[DetailsRole] = "details";
     names[UuidRole] = "uuid";
+    names[SectionRole] = "section";
 
     return names;
 }
@@ -232,17 +252,120 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 {
     QVector<NvComputer*> newComputerList = m_ComputerManager->getComputers();
 
-    // Reset the model if the structural layout of the list has changed
-    if (m_Computers != newComputerList) {
+    // Always reset the model to apply section ordering
+    beginResetModel();
+    m_Computers = newComputerList;
+    sortComputers();
+    endResetModel();
+}
+
+void ComputerModel::sortComputers()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    bool showSections = prefs->pcShowSections;
+
+    if (m_SortMode == 1 && !m_CustomOrder.isEmpty()) {
+        // Custom sort order
+        std::sort(m_Computers.begin(), m_Computers.end(),
+                  [this, showSections](NvComputer* a, NvComputer* b) {
+            QReadLocker lockA(&a->lock);
+            QReadLocker lockB(&b->lock);
+
+            if (showSections) {
+                // First group by section
+                int sectionA = (a->state == NvComputer::CS_ONLINE && a->pairState == NvComputer::PS_PAIRED) ? 0 :
+                               (a->state == NvComputer::CS_ONLINE) ? 1 : 2;
+                int sectionB = (b->state == NvComputer::CS_ONLINE && b->pairState == NvComputer::PS_PAIRED) ? 0 :
+                               (b->state == NvComputer::CS_ONLINE) ? 1 : 2;
+                if (sectionA != sectionB) return sectionA < sectionB;
+            }
+
+            int idxA = m_CustomOrder.indexOf(a->uuid);
+            int idxB = m_CustomOrder.indexOf(b->uuid);
+            if (idxA < 0 && idxB < 0) return a->name.toLower() < b->name.toLower();
+            if (idxA < 0) return false;
+            if (idxB < 0) return true;
+            return idxA < idxB;
+        });
+    } else {
+        // Alphabetical sort with optional section grouping
+        std::sort(m_Computers.begin(), m_Computers.end(),
+                  [showSections](NvComputer* a, NvComputer* b) {
+            QReadLocker lockA(&a->lock);
+            QReadLocker lockB(&b->lock);
+
+            if (showSections) {
+                int sectionA = (a->state == NvComputer::CS_ONLINE && a->pairState == NvComputer::PS_PAIRED) ? 0 :
+                               (a->state == NvComputer::CS_ONLINE) ? 1 : 2;
+                int sectionB = (b->state == NvComputer::CS_ONLINE && b->pairState == NvComputer::PS_PAIRED) ? 0 :
+                               (b->state == NvComputer::CS_ONLINE) ? 1 : 2;
+                if (sectionA != sectionB) return sectionA < sectionB;
+            }
+
+            return a->name.toLower() < b->name.toLower();
+        });
+    }
+}
+
+void ComputerModel::setSortMode(int mode)
+{
+    if (m_SortMode != mode) {
+        m_SortMode = mode;
+
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->pcSortMode = static_cast<StreamingPreferences::PcSortMode>(mode);
+        prefs->save();
+
         beginResetModel();
-        m_Computers = newComputerList;
+        sortComputers();
         endResetModel();
     }
-    else {
-        // Let the view know that this specific computer changed
-        int index = m_Computers.indexOf(computer);
-        emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+}
+
+int ComputerModel::getSortMode() const
+{
+    return m_SortMode;
+}
+
+void ComputerModel::moveComputer(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= m_Computers.count() ||
+        toIndex < 0 || toIndex >= m_Computers.count() ||
+        fromIndex == toIndex) {
+        return;
     }
+
+    // Switch to custom mode if not already
+    if (m_SortMode != 1) {
+        m_SortMode = 1;
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->pcSortMode = StreamingPreferences::PSM_CUSTOM;
+        prefs->save();
+    }
+
+    int destIndex = toIndex > fromIndex ? toIndex + 1 : toIndex;
+    beginMoveRows(QModelIndex(), fromIndex, fromIndex, QModelIndex(), destIndex);
+    m_Computers.move(fromIndex, toIndex);
+    endMoveRows();
+
+    // Save custom order
+    m_CustomOrder.clear();
+    for (NvComputer* pc : m_Computers) {
+        m_CustomOrder.append(pc->uuid);
+    }
+    saveCustomOrder();
+}
+
+void ComputerModel::saveCustomOrder()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    prefs->setPcCustomOrder(m_CustomOrder);
+}
+
+void ComputerModel::loadCustomOrder()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    m_CustomOrder = prefs->getPcCustomOrder();
 }
 
 #include "computermodel.moc"

@@ -17,7 +17,8 @@ class ComputerModel : public QAbstractListModel
         StatusUnknownRole,
         ServerSupportedRole,
         DetailsRole,
-        UuidRole
+        UuidRole,
+        SectionRole,
     };
 
 public:
@@ -46,6 +47,16 @@ public:
 
     Q_INVOKABLE Session* createSessionForCurrentGame(int computerIndex);
 
+    // Sort mode management
+    Q_INVOKABLE void setSortMode(int mode);
+    Q_INVOKABLE int getSortMode() const;
+
+    // Custom ordering
+    Q_INVOKABLE void moveComputer(int fromIndex, int toIndex);
+
+    // Convenience for QML
+    Q_INVOKABLE int count() const { return m_Computers.count(); }
+
 signals:
     void pairingCompleted(QVariant error);
     void connectionTestCompleted(int result, QString blockedPorts);
@@ -56,6 +67,12 @@ private slots:
     void handlePairingCompleted(NvComputer* computer, QString error);
 
 private:
+    void sortComputers();
+    void saveCustomOrder();
+    void loadCustomOrder();
+
     QVector<NvComputer*> m_Computers;
     ComputerManager* m_ComputerManager;
+    int m_SortMode; // 0=alphabetical, 1=custom
+    QStringList m_CustomOrder; // PC UUIDs in custom order
 };

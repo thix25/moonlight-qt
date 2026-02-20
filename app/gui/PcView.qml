@@ -9,34 +9,35 @@ import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
-CenteredGridView {
+Item {
     property ComputerModel computerModel : createModel()
 
-    id: pcGrid
-    focus: true
-    activeFocusOnTab: true
-    topMargin: 20
-    bottomMargin: 5
-    cellWidth: 310; cellHeight: 330;
+    // Dynamic tile sizing based on preference scale (50-200%)
+    property real tileScale: StreamingPreferences.pcTileScale / 100.0
+    property int tileCellWidth: Math.round(310 * tileScale)
+    property int tileCellHeight: Math.round(330 * tileScale)
+    property int tileItemWidth: Math.round(300 * tileScale)
+    property int tileItemHeight: Math.round(320 * tileScale)
+    property int tileIconSize: Math.round(200 * tileScale)
+
+    property bool showSections: StreamingPreferences.pcShowSections
+
+    id: pcViewRoot
     objectName: qsTr("Computers")
 
     Component.onCompleted: {
-        // Don't show any highlighted item until interacting with them.
-        // We do this here instead of onActivated to avoid losing the user's
-        // selection when backing out of a different page of the app.
-        currentIndex = -1
+        // Nothing special needed
     }
 
-    // Note: Any initialization done here that is critical for streaming must
-    // also be done in CliStartStreamSegue.qml, since this code does not run
-    // for command-line initiated streams.
     StackView.onActivated: {
-        // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
 
-        // Highlight the first item if a gamepad is connected
-        if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-            currentIndex = 0
+        if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
+            if (showSections) {
+                pcListView.currentIndex = 0
+            } else {
+                pcGrid.currentIndex = 0
+            }
         }
     }
 
@@ -46,10 +47,8 @@ CenteredGridView {
 
     function pairingComplete(error)
     {
-        // Close the PIN dialog
         pairDialog.close()
 
-        // Display a failed dialog if we got an error
         if (error !== undefined) {
             errorDialog.text = error
             errorDialog.helpText = ""
@@ -82,10 +81,455 @@ CenteredGridView {
         return model
     }
 
+    // PC action functions (shared between grid and list delegates)
+    function pcClicked(modelIndex, modelOnline, modelPaired, modelServerSupported, modelName) {
+        if (modelOnline) {
+            if (!modelServerSupported) {
+                errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(modelName)
+                errorDialog.helpText = ""
+                errorDialog.open()
+            }
+            else if (modelPaired) {
+                var component = Qt.createComponent("AppView.qml")
+                var appView = component.createObject(stackView, {"computerIndex": modelIndex, "objectName": modelName})
+                stackView.push(appView)
+            }
+            else {
+                var pin = computerModel.generatePinString()
+                computerModel.pairComputer(modelIndex, pin)
+                pairDialog.pin = pin
+                pairDialog.open()
+            }
+        } else if (!modelOnline) {
+            // For offline PCs, open the context menu
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        // ==================== TOOLBAR ====================
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 50
+            color: "#404040"
+            z: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                spacing: 10
+
+                Label {
+                    text: qsTr("Computers")
+                    font.pointSize: 14
+                    font.bold: true
+                    Layout.fillWidth: true
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                // Sort mode selector
+                ComboBox {
+                    id: pcSortModeCombo
+                    Layout.preferredWidth: 160
+                    model: [qsTr("Alphabetical"), qsTr("Custom Order")]
+                    currentIndex: computerModel.getSortMode()
+                    onActivated: {
+                        computerModel.setSortMode(index)
+                    }
+                    ToolTip.text: qsTr("Sort order")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+                }
+
+                // Show sections toggle
+                ToolButton {
+                    id: sectionsButton
+                    text: showSections ? "▤" : "▥"
+                    font.pointSize: 18
+                    onClicked: {
+                        StreamingPreferences.pcShowSections = !StreamingPreferences.pcShowSections
+                        StreamingPreferences.save()
+                        showSections = StreamingPreferences.pcShowSections
+                        // Force re-sort with new section grouping
+                        computerModel.setSortMode(computerModel.getSortMode())
+                    }
+                    ToolTip.text: showSections ? qsTr("Hide Sections") : qsTr("Show Sections (Online / Not Paired / Offline)")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+                }
+
+                // Tile size slider
+                Label {
+                    text: "🔍"
+                    font.pointSize: 14
+                }
+                Slider {
+                    id: pcTileSizeSlider
+                    Layout.preferredWidth: 120
+                    from: 50
+                    to: 200
+                    stepSize: 10
+                    value: StreamingPreferences.pcTileScale
+                    onMoved: {
+                        StreamingPreferences.pcTileScale = value
+                        StreamingPreferences.save()
+                    }
+                    ToolTip {
+                        parent: pcTileSizeSlider.handle
+                        visible: pcTileSizeSlider.pressed
+                        text: Math.round(pcTileSizeSlider.value) + "%"
+                    }
+                }
+            }
+        }
+
+        // ==================== SECTION-BASED LIST VIEW ====================
+        ListView {
+            id: pcListView
+            visible: showSections
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            focus: showSections
+            activeFocusOnTab: true
+            topMargin: 10
+            bottomMargin: 5
+            clip: true
+
+            model: computerModel
+
+            section.property: "section"
+            section.criteria: ViewSection.FullString
+            section.delegate: Rectangle {
+                width: pcListView.width
+                height: 40
+                color: "transparent"
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 15
+
+                    Rectangle {
+                        width: 12
+                        height: 12
+                        radius: 6
+                        color: section === qsTr("Online") ? "#4CAF50" :
+                               section === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                    }
+
+                    Label {
+                        text: section
+                        font.pointSize: 16
+                        font.bold: true
+                        Layout.fillWidth: true
+                        verticalAlignment: Text.AlignVCenter
+                        color: section === qsTr("Online") ? "#4CAF50" :
+                               section === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#555555"
+                    }
+                }
+            }
+
+            delegate: ItemDelegate {
+                width: pcListView.width
+                height: Math.round(80 * tileScale)
+                highlighted: pcListView.activeFocus && pcListView.currentIndex === index
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 25
+                    anchors.rightMargin: 15
+                    spacing: 15
+
+                    Image {
+                        source: "qrc:/res/desktop_windows-48px.svg"
+                        sourceSize {
+                            width: Math.round(48 * tileScale)
+                            height: Math.round(48 * tileScale)
+                        }
+                        opacity: model.online ? 1.0 : 0.4
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: model.name
+                            font.pointSize: Math.round(18 * tileScale)
+                            elide: Label.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: model.online ?
+                                      (model.paired ? qsTr("Online - Paired") : qsTr("Online - Not Paired")) :
+                                      qsTr("Offline")
+                            font.pointSize: Math.round(11 * tileScale)
+                            opacity: 0.6
+                            color: model.online ? (model.paired ? "#4CAF50" : "#FF9800") : "#9E9E9E"
+                        }
+                    }
+
+                    // Status icons
+                    Image {
+                        visible: !model.online
+                        source: "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg"
+                        sourceSize {
+                            width: Math.round(24 * tileScale)
+                            height: Math.round(24 * tileScale)
+                        }
+                    }
+                    Image {
+                        visible: model.online && !model.paired
+                        source: "qrc:/res/baseline-lock-24px.svg"
+                        sourceSize {
+                            width: Math.round(24 * tileScale)
+                            height: Math.round(24 * tileScale)
+                        }
+                    }
+
+                    BusyIndicator {
+                        visible: model.statusUnknown
+                        running: visible
+                        Layout.preferredWidth: Math.round(32 * tileScale)
+                        Layout.preferredHeight: Math.round(32 * tileScale)
+                    }
+                }
+
+                onClicked: {
+                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name)
+                }
+
+                onPressAndHold: {
+                    pcSectionContextMenu.pcIndex = index
+                    pcSectionContextMenu.pcName = model.name
+                    pcSectionContextMenu.pcOnline = model.online
+                    pcSectionContextMenu.pcPaired = model.paired
+                    pcSectionContextMenu.pcWakeable = !model.online && model.wakeable
+                    pcSectionContextMenu.pcUuid = model.uuid
+                    pcSectionContextMenu.pcDetails = model.details
+                    if (pcSectionContextMenu.popup) {
+                        pcSectionContextMenu.popup()
+                    } else {
+                        pcSectionContextMenu.open()
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: parent.pressAndHold()
+                }
+            }
+
+            ScrollBar.vertical: ScrollBar {}
+        }
+
+        // ==================== FLAT GRID VIEW (no sections) ====================
+        CenteredGridView {
+            id: pcGrid
+            visible: !showSections
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            focus: !showSections
+            activeFocusOnTab: true
+            clip: true
+            topMargin: 20
+            bottomMargin: 5
+            cellWidth: tileCellWidth
+            cellHeight: tileCellHeight
+
+            Component.onCompleted: {
+                currentIndex = -1
+            }
+
+            model: computerModel
+
+            delegate: NavigableItemDelegate {
+                width: tileItemWidth
+                height: tileItemHeight
+                grid: pcGrid
+
+                property alias pcContextMenu : pcContextMenuLoader.item
+
+                Image {
+                    id: pcIcon
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    source: "qrc:/res/desktop_windows-48px.svg"
+                    sourceSize {
+                        width: tileIconSize
+                        height: tileIconSize
+                    }
+                }
+
+                Image {
+                    id: stateIcon
+                    anchors.horizontalCenter: pcIcon.horizontalCenter
+                    anchors.verticalCenter: pcIcon.verticalCenter
+                    anchors.verticalCenterOffset: !model.online ? Math.round(-18 * tileScale) : Math.round(-16 * tileScale)
+                    visible: !model.statusUnknown && (!model.online || !model.paired)
+                    source: !model.online ? "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg" : "qrc:/res/baseline-lock-24px.svg"
+                    sourceSize {
+                        width: !model.online ? Math.round(75 * tileScale) : Math.round(70 * tileScale)
+                        height: !model.online ? Math.round(75 * tileScale) : Math.round(70 * tileScale)
+                    }
+                }
+
+                BusyIndicator {
+                    id: statusUnknownSpinner
+                    anchors.horizontalCenter: pcIcon.horizontalCenter
+                    anchors.verticalCenter: pcIcon.verticalCenter
+                    anchors.verticalCenterOffset: Math.round(-15 * tileScale)
+                    width: Math.round(75 * tileScale)
+                    height: Math.round(75 * tileScale)
+                    visible: model.statusUnknown
+                    running: visible
+                }
+
+                Label {
+                    id: pcNameText
+                    text: model.name
+
+                    width: parent.width
+                    anchors.top: pcIcon.bottom
+                    anchors.bottom: parent.bottom
+                    font.pointSize: Math.round(36 * tileScale)
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideRight
+                }
+
+                Loader {
+                    id: pcContextMenuLoader
+                    asynchronous: true
+                    sourceComponent: NavigableMenu {
+                        id: pcContextMenu
+                        MenuItem {
+                            text: qsTr("PC Status: %1").arg(model.online ? qsTr("Online") : qsTr("Offline"))
+                            font.bold: true
+                            enabled: false
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("View All Apps")
+                            onTriggered: {
+                                var component = Qt.createComponent("AppView.qml")
+                                var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name, "showHiddenGames": true})
+                                stackView.push(appView)
+                            }
+                            visible: model.online && model.paired
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("Wake PC")
+                            onTriggered: computerModel.wakeComputer(index)
+                            visible: !model.online && model.wakeable
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("Test Network")
+                            onTriggered: {
+                                computerModel.testConnectionForComputer(index)
+                                testConnectionDialog.open()
+                            }
+                        }
+
+                        NavigableMenuItem {
+                            text: qsTr("PC Settings")
+                            onTriggered: {
+                                clientSettingsDialog.clientName = model.name
+                                clientSettingsDialog.clientUuid = model.uuid
+                                clientSettingsDialog.open()
+                            }
+                        }
+
+                        NavigableMenuItem {
+                            text: qsTr("Rename PC")
+                            onTriggered: {
+                                renamePcDialog.pcIndex = index
+                                renamePcDialog.originalName = model.name
+                                renamePcDialog.open()
+                            }
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("Delete PC")
+                            onTriggered: {
+                                deletePcDialog.pcIndex = index
+                                deletePcDialog.pcName = model.name
+                                deletePcDialog.open()
+                            }
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("View Details")
+                            onTriggered: {
+                                showPcDetailsDialog.pcDetails = model.details
+                                showPcDetailsDialog.open()
+                            }
+                        }
+
+                        MenuSeparator { visible: computerModel.getSortMode() === 1 }
+
+                        NavigableMenuItem {
+                            text: qsTr("Move Up")
+                            visible: computerModel.getSortMode() === 1
+                            enabled: index > 0
+                            onTriggered: computerModel.moveComputer(index, index - 1)
+                        }
+                        NavigableMenuItem {
+                            text: qsTr("Move Down")
+                            visible: computerModel.getSortMode() === 1
+                            enabled: index < computerModel.count() - 1
+                            onTriggered: computerModel.moveComputer(index, index + 1)
+                        }
+                    }
+                }
+
+                onClicked: {
+                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name)
+                }
+
+                onPressAndHold: {
+                    if (pcContextMenu.popup) {
+                        pcContextMenu.popup()
+                    }
+                    else {
+                        pcContextMenu.open()
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton;
+                    onClicked: {
+                        parent.pressAndHold()
+                    }
+                }
+
+                Keys.onMenuPressed: {
+                    pcContextMenu.open()
+                }
+
+                Keys.onDeletePressed: {
+                    deletePcDialog.pcIndex = index
+                    deletePcDialog.pcName = model.name
+                    deletePcDialog.open()
+                }
+            }
+
+            ScrollBar.vertical: ScrollBar {}
+        }
+    }
+
+    // Searching indicator
     Row {
         anchors.centerIn: parent
         spacing: 5
-        visible: pcGrid.count === 0
+        visible: (showSections ? pcListView.count : pcGrid.count) === 0
 
         BusyIndicator {
             id: searchSpinner
@@ -104,195 +548,93 @@ CenteredGridView {
         }
     }
 
-    model: computerModel
+    // Shared context menu for section-based list view
+    NavigableMenu {
+        id: pcSectionContextMenu
+        property int pcIndex: -1
+        property string pcName: ""
+        property bool pcOnline: false
+        property bool pcPaired: false
+        property bool pcWakeable: false
+        property string pcUuid: ""
+        property string pcDetails: ""
 
-    delegate: NavigableItemDelegate {
-        width: 300; height: 320;
-        grid: pcGrid
-
-        property alias pcContextMenu : pcContextMenuLoader.item
-
-        Image {
-            id: pcIcon
-            anchors.horizontalCenter: parent.horizontalCenter
-            source: "qrc:/res/desktop_windows-48px.svg"
-            sourceSize {
-                width: 200
-                height: 200
+        MenuItem {
+            text: qsTr("PC Status: %1").arg(pcSectionContextMenu.pcOnline ? qsTr("Online") : qsTr("Offline"))
+            font.bold: true
+            enabled: false
+        }
+        NavigableMenuItem {
+            text: qsTr("View All Apps")
+            onTriggered: {
+                var component = Qt.createComponent("AppView.qml")
+                var appView = component.createObject(stackView, {"computerIndex": pcSectionContextMenu.pcIndex, "objectName": pcSectionContextMenu.pcName, "showHiddenGames": true})
+                stackView.push(appView)
+            }
+            visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
+        }
+        NavigableMenuItem {
+            text: qsTr("Wake PC")
+            onTriggered: computerModel.wakeComputer(pcSectionContextMenu.pcIndex)
+            visible: pcSectionContextMenu.pcWakeable
+        }
+        NavigableMenuItem {
+            text: qsTr("Test Network")
+            onTriggered: {
+                computerModel.testConnectionForComputer(pcSectionContextMenu.pcIndex)
+                testConnectionDialog.open()
+            }
+        }
+        NavigableMenuItem {
+            text: qsTr("PC Settings")
+            onTriggered: {
+                clientSettingsDialog.clientName = pcSectionContextMenu.pcName
+                clientSettingsDialog.clientUuid = pcSectionContextMenu.pcUuid
+                clientSettingsDialog.open()
+            }
+        }
+        NavigableMenuItem {
+            text: qsTr("Rename PC")
+            onTriggered: {
+                renamePcDialog.pcIndex = pcSectionContextMenu.pcIndex
+                renamePcDialog.originalName = pcSectionContextMenu.pcName
+                renamePcDialog.open()
+            }
+        }
+        NavigableMenuItem {
+            text: qsTr("Delete PC")
+            onTriggered: {
+                deletePcDialog.pcIndex = pcSectionContextMenu.pcIndex
+                deletePcDialog.pcName = pcSectionContextMenu.pcName
+                deletePcDialog.open()
+            }
+        }
+        NavigableMenuItem {
+            text: qsTr("View Details")
+            onTriggered: {
+                showPcDetailsDialog.pcDetails = pcSectionContextMenu.pcDetails
+                showPcDetailsDialog.open()
             }
         }
 
-        Image {
-            // TODO: Tooltip
-            id: stateIcon
-            anchors.horizontalCenter: pcIcon.horizontalCenter
-            anchors.verticalCenter: pcIcon.verticalCenter
-            anchors.verticalCenterOffset: !model.online ? -18 : -16
-            visible: !model.statusUnknown && (!model.online || !model.paired)
-            source: !model.online ? "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg" : "qrc:/res/baseline-lock-24px.svg"
-            sourceSize {
-                width: !model.online ? 75 : 70
-                height: !model.online ? 75 : 70
-            }
+        MenuSeparator { visible: computerModel.getSortMode() === 1 }
+
+        NavigableMenuItem {
+            text: qsTr("Move Up")
+            visible: computerModel.getSortMode() === 1
+            enabled: pcSectionContextMenu.pcIndex > 0
+            onTriggered: computerModel.moveComputer(pcSectionContextMenu.pcIndex, pcSectionContextMenu.pcIndex - 1)
         }
-
-        BusyIndicator {
-            id: statusUnknownSpinner
-            anchors.horizontalCenter: pcIcon.horizontalCenter
-            anchors.verticalCenter: pcIcon.verticalCenter
-            anchors.verticalCenterOffset: -15
-            width: 75
-            height: 75
-            visible: model.statusUnknown
-            running: visible
-        }
-
-        Label {
-            id: pcNameText
-            text: model.name
-
-            width: parent.width
-            anchors.top: pcIcon.bottom
-            anchors.bottom: parent.bottom
-            font.pointSize: 36
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            elide: Text.ElideRight
-        }
-
-        Loader {
-            id: pcContextMenuLoader
-            asynchronous: true
-            sourceComponent: NavigableMenu {
-                id: pcContextMenu
-                MenuItem {
-                    text: qsTr("PC Status: %1").arg(model.online ? qsTr("Online") : qsTr("Offline"))
-                    font.bold: true
-                    enabled: false
-                }
-                NavigableMenuItem {
-                    text: qsTr("View All Apps")
-                    onTriggered: {
-                        var component = Qt.createComponent("AppView.qml")
-                        var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name, "showHiddenGames": true})
-                        stackView.push(appView)
-                    }
-                    visible: model.online && model.paired
-                }
-                NavigableMenuItem {
-                    text: qsTr("Wake PC")
-                    onTriggered: computerModel.wakeComputer(index)
-                    visible: !model.online && model.wakeable
-                }
-                NavigableMenuItem {
-                    text: qsTr("Test Network")
-                    onTriggered: {
-                        computerModel.testConnectionForComputer(index)
-                        testConnectionDialog.open()
-                    }
-                }
-
-                NavigableMenuItem {
-                    text: qsTr("PC Settings")
-                    onTriggered: {
-                        clientSettingsDialog.clientName = model.name
-                        clientSettingsDialog.clientUuid = model.uuid
-                        clientSettingsDialog.open()
-                    }
-                }
-
-                NavigableMenuItem {
-                    text: qsTr("Rename PC")
-                    onTriggered: {
-                        renamePcDialog.pcIndex = index
-                        renamePcDialog.originalName = model.name
-                        renamePcDialog.open()
-                    }
-                }
-                NavigableMenuItem {
-                    text: qsTr("Delete PC")
-                    onTriggered: {
-                        deletePcDialog.pcIndex = index
-                        deletePcDialog.pcName = model.name
-                        deletePcDialog.open()
-                    }
-                }
-                NavigableMenuItem {
-                    text: qsTr("View Details")
-                    onTriggered: {
-                        showPcDetailsDialog.pcDetails = model.details
-                        showPcDetailsDialog.open()
-                    }
-                }
-            }
-        }
-
-        onClicked: {
-            if (model.online) {
-                if (!model.serverSupported) {
-                    errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(model.name)
-                    errorDialog.helpText = ""
-                    errorDialog.open()
-                }
-                else if (model.paired) {
-                    // go to game view
-                    var component = Qt.createComponent("AppView.qml")
-                    var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name})
-                    stackView.push(appView)
-                }
-                else {
-                    var pin = computerModel.generatePinString()
-
-                    // Kick off pairing in the background
-                    computerModel.pairComputer(index, pin)
-
-                    // Display the pairing dialog
-                    pairDialog.pin = pin
-                    pairDialog.open()
-                }
-            } else if (!model.online) {
-                // Using open() here because it may be activated by keyboard
-                pcContextMenu.open()
-            }
-        }
-
-        onPressAndHold: {
-            // popup() ensures the menu appears under the mouse cursor
-            if (pcContextMenu.popup) {
-                pcContextMenu.popup()
-            }
-            else {
-                // Qt 5.9 doesn't have popup()
-                pcContextMenu.open()
-            }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.RightButton;
-            onClicked: {
-                parent.pressAndHold()
-            }
-        }
-
-        Keys.onMenuPressed: {
-            // We must use open() here so the menu is positioned on
-            // the ItemDelegate and not where the mouse cursor is
-            pcContextMenu.open()
-        }
-
-        Keys.onDeletePressed: {
-            deletePcDialog.pcIndex = index
-            deletePcDialog.pcName = model.name
-            deletePcDialog.open()
+        NavigableMenuItem {
+            text: qsTr("Move Down")
+            visible: computerModel.getSortMode() === 1
+            enabled: pcSectionContextMenu.pcIndex < computerModel.count() - 1
+            onTriggered: computerModel.moveComputer(pcSectionContextMenu.pcIndex, pcSectionContextMenu.pcIndex + 1)
         }
     }
 
     ErrorMessageDialog {
         id: errorDialog
-
-        // Using Setup-Guide here instead of Troubleshooting because it's likely that users
-        // will arrive here by forgetting to enable GameStream or not forwarding ports.
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide"
     }
 
@@ -302,25 +644,19 @@ CenteredGridView {
 
     NavigableMessageDialog {
         id: pairDialog
-
-        // Pairing dialog must be modal to prevent double-clicks from triggering
-        // pairing twice
         modal: true
         closePolicy: Popup.CloseOnEscape
 
-        // don't allow edits to the rest of the window while open
         property string pin : "0000"
         text:qsTr("Please enter %1 on your host PC. This dialog will close when pairing is completed.").arg(pin)+"\n\n"+
              qsTr("If your host PC is running Sunshine, navigate to the Sunshine web UI to enter the PIN.")
         standardButtons: Dialog.Cancel
         onRejected: {
-            // FIXME: We should interrupt pairing here
         }
     }
 
     NavigableMessageDialog {
         id: deletePcDialog
-        // don't allow edits to the rest of the window while open
         property int pcIndex : -1
         property string pcName : ""
         text: qsTr("Are you sure you want to remove '%1'?").arg(pcName)
@@ -357,7 +693,6 @@ CenteredGridView {
                 imageSrc = "qrc:/res/baseline-error_outline-24px.svg"
             }
 
-            // Stop showing the spinner and show the image instead
             showSpinner = false
         }
     }
@@ -371,7 +706,6 @@ CenteredGridView {
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         onOpened: {
-            // Force keyboard focus on the textbox so keyboard navigation works
             editText.forceActiveFocus()
         }
 
@@ -415,6 +749,4 @@ CenteredGridView {
         imageSrc: "qrc:/res/baseline-help_outline-24px.svg"
         standardButtons: Dialog.Ok
     }
-
-    ScrollBar.vertical: ScrollBar {}
 }
