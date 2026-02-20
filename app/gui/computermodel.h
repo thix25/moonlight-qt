@@ -60,6 +60,9 @@ public:
     // Force re-sort (e.g. when section toggle changes)
     Q_INVOKABLE void refreshSort();
 
+    // Lightweight data refresh without model reset (avoids flicker)
+    Q_INVOKABLE void refreshData();
+
     // Convenience for QML
     Q_INVOKABLE int count() const { return m_Computers.count(); }
     Q_INVOKABLE QString getSectionAt(int index) const;

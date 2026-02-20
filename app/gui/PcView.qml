@@ -283,11 +283,31 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 15
 
-                    Label {
-                        text: isCollapsed ? "▸" : "▾"
-                        font.pointSize: 14
-                        color: section === qsTr("Online") ? "#4CAF50" :
+                    Canvas {
+                        width: 16
+                        height: 16
+                        property bool collapsed: isCollapsed
+                        property color arrowColor: section === qsTr("Online") ? "#4CAF50" :
                                section === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                        onCollapsedChanged: requestPaint()
+                        onArrowColorChanged: requestPaint()
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.reset()
+                            ctx.fillStyle = arrowColor
+                            ctx.beginPath()
+                            if (collapsed) {
+                                ctx.moveTo(4, 2)
+                                ctx.lineTo(13, 8)
+                                ctx.lineTo(4, 14)
+                            } else {
+                                ctx.moveTo(2, 4)
+                                ctx.lineTo(14, 4)
+                                ctx.lineTo(8, 13)
+                            }
+                            ctx.closePath()
+                            ctx.fill()
+                        }
                     }
 
                     Rectangle {
@@ -407,7 +427,7 @@ Item {
 
                     // Middle: settings info (fills available space)
                     Label {
-                        visible: showPcInfo && model.online && model.paired
+                        visible: showPcInfo
                         text: model.settingsSummary || ""
                         font.pointSize: Math.max(7, Math.round(9 * tileScale))
                         color: "#9E9E9E"
@@ -418,7 +438,7 @@ Item {
 
                     // Spacer when info not visible
                     Item {
-                        visible: !(showPcInfo && model.online && model.paired)
+                        visible: !showPcInfo
                         Layout.fillWidth: true
                     }
 
@@ -449,7 +469,7 @@ Item {
 
                     // Quick toggle: Custom/Global checkbox
                     Rectangle {
-                        visible: showPcInfo && model.online && model.paired
+                        visible: showPcInfo
                         width: listToggleRow.implicitWidth + 12
                         height: listToggleRow.implicitHeight + 6
                         radius: 4
@@ -497,7 +517,7 @@ Item {
                                 } else {
                                     StreamingPreferences.activateClientSettings(model.uuid)
                                 }
-                                computerModel.refreshSort()
+                                computerModel.refreshData()
                             }
                         }
 
@@ -664,11 +684,33 @@ Item {
                                 anchors.fill: parent
                                 anchors.leftMargin: 15
 
-                                Label {
-                                    text: isCollapsed ? "▸" : "▾"
-                                    font.pointSize: 14
-                                    color: sectionName === qsTr("Online") ? "#4CAF50" :
+                                Canvas {
+                                    width: 16
+                                    height: 16
+                                    property bool collapsed: isCollapsed
+                                    property color arrowColor: sectionName === qsTr("Online") ? "#4CAF50" :
                                            sectionName === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                                    onCollapsedChanged: requestPaint()
+                                    onArrowColorChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        ctx.fillStyle = arrowColor
+                                        ctx.beginPath()
+                                        if (collapsed) {
+                                            // Right-pointing triangle
+                                            ctx.moveTo(4, 2)
+                                            ctx.lineTo(13, 8)
+                                            ctx.lineTo(4, 14)
+                                        } else {
+                                            // Down-pointing triangle
+                                            ctx.moveTo(2, 4)
+                                            ctx.lineTo(14, 4)
+                                            ctx.lineTo(8, 13)
+                                        }
+                                        ctx.closePath()
+                                        ctx.fill()
+                                    }
                                 }
                                 Rectangle {
                                     width: 12; height: 12; radius: 6
@@ -767,7 +809,7 @@ Item {
                                     // Settings info overlay at the bottom of the tile
                                     Column {
                                         id: pcInfoColumn
-                                        visible: showPcInfo && pcOnline && pcPaired
+                                        visible: showPcInfo
                                         anchors.bottom: parent.bottom
                                         anchors.left: parent.left
                                         anchors.right: parent.right
@@ -825,7 +867,7 @@ Item {
                                                     } else {
                                                         StreamingPreferences.activateClientSettings(pcUuid)
                                                     }
-                                                    computerModel.refreshSort()
+                                                    computerModel.refreshData()
                                                 }
                                             }
                                         }
@@ -903,18 +945,16 @@ Item {
                                                 text: pcHasClientSettings ? "✓ " + qsTr("Uses Custom Settings") : qsTr("Uses Global Settings")
                                                 enabled: false
                                                 font.italic: true
-                                                visible: pcOnline && pcPaired
                                             }
                                             NavigableMenuItem {
                                                 text: pcHasClientSettings ? qsTr("Switch to Global Settings") : (pcHasSavedClientSettings ? qsTr("Switch to Custom Settings") : qsTr("Create Custom Settings"))
-                                                visible: pcOnline && pcPaired
                                                 onTriggered: {
                                                     if (pcHasClientSettings) {
                                                         StreamingPreferences.deactivateClientSettings(pcUuid)
-                                                        computerModel.refreshSort()
+                                                        computerModel.refreshData()
                                                     } else if (pcHasSavedClientSettings) {
                                                         StreamingPreferences.activateClientSettings(pcUuid)
-                                                        computerModel.refreshSort()
+                                                        computerModel.refreshData()
                                                     } else {
                                                         clientSettingsDialog.clientName = pcName
                                                         clientSettingsDialog.clientUuid = pcUuid
@@ -1064,18 +1104,16 @@ Item {
             text: pcSectionContextMenu.pcHasClientSettings ? "✓ " + qsTr("Uses Custom Settings") : qsTr("Uses Global Settings")
             enabled: false
             font.italic: true
-            visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
         }
         NavigableMenuItem {
             text: pcSectionContextMenu.pcHasClientSettings ? qsTr("Switch to Global Settings") : (pcSectionContextMenu.pcHasSavedClientSettings ? qsTr("Switch to Custom Settings") : qsTr("Create Custom Settings"))
-            visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
             onTriggered: {
                 if (pcSectionContextMenu.pcHasClientSettings) {
                     StreamingPreferences.deactivateClientSettings(pcSectionContextMenu.pcUuid)
-                    computerModel.refreshSort()
+                    computerModel.refreshData()
                 } else if (pcSectionContextMenu.pcHasSavedClientSettings) {
                     StreamingPreferences.activateClientSettings(pcSectionContextMenu.pcUuid)
-                    computerModel.refreshSort()
+                    computerModel.refreshData()
                 } else {
                     clientSettingsDialog.clientName = pcSectionContextMenu.pcName
                     clientSettingsDialog.clientUuid = pcSectionContextMenu.pcUuid
