@@ -149,8 +149,23 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         default: codecStr = tr("Auto"); break;
         }
 
-        return QString("%1x%2 | %3 FPS | %4 Mbps | %5 | VSync: %6 | %7")
-            .arg(w).arg(h)
+        // Friendly resolution name prefix
+        QString resName;
+        if (w == 3840 && h == 2160) resName = "4K";
+        else if (w == 2560 && h == 1440) resName = "1440p";
+        else if (w == 1920 && h == 1080) resName = "1080p";
+        else if (w == 1280 && h == 720) resName = "720p";
+        else if (w == 2560 && h == 1080) resName = "UW-1080p";
+        else if (w == 3440 && h == 1440) resName = "UW-1440p";
+        else if (w == 7680 && h == 4320) resName = "8K";
+        else resName = QString();
+
+        QString resStr = resName.isEmpty()
+            ? QString("%1x%2").arg(w).arg(h)
+            : QString("%1 (%2x%3)").arg(resName).arg(w).arg(h);
+
+        return QString("%1 | %2 FPS | %3 Mbps | %4 | VSync: %5 | %6")
+            .arg(resStr)
             .arg(fpsVal)
             .arg(QString::number(bitrateVal / 1000.0, 'f', 1))
             .arg(codecStr)

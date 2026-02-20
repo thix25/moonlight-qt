@@ -378,37 +378,16 @@ Item {
                         opacity: model.online ? 1.0 : 0.4
                     }
 
+                    // Left: PC name + status
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
 
-                        RowLayout {
+                        Label {
+                            text: model.name
+                            font.pointSize: Math.round(18 * tileScale)
+                            elide: Label.ElideRight
                             Layout.fillWidth: true
-                            spacing: 6
-
-                            Label {
-                                text: model.name
-                                font.pointSize: Math.round(18 * tileScale)
-                                elide: Label.ElideRight
-                                Layout.fillWidth: true
-                            }
-
-                            // Global/Custom indicator badge
-                            Rectangle {
-                                visible: showPcInfo && model.online && model.paired
-                                width: globalCustomLabel.implicitWidth + 10
-                                height: globalCustomLabel.implicitHeight + 4
-                                radius: 3
-                                color: model.hasClientSettings ? "#2196F3" : "#666666"
-
-                                Label {
-                                    id: globalCustomLabel
-                                    anchors.centerIn: parent
-                                    text: model.hasClientSettings ? qsTr("Custom") : qsTr("Global")
-                                    font.pointSize: Math.max(7, Math.round(8 * tileScale))
-                                    color: "white"
-                                }
-                            }
                         }
 
                         Label {
@@ -419,20 +398,9 @@ Item {
                             opacity: 0.6
                             color: model.online ? (model.paired ? "#4CAF50" : "#FF9800") : "#9E9E9E"
                         }
-
-                        // Settings info line
-                        Label {
-                            visible: showPcInfo && model.online && model.paired
-                            text: model.settingsSummary || ""
-                            font.pointSize: Math.max(7, Math.round(9 * tileScale))
-                            color: "#9E9E9E"
-                            opacity: 0.8
-                            elide: Label.ElideRight
-                            Layout.fillWidth: true
-                        }
                     }
 
-                    // Status icons
+                    // Status icons (center area)
                     Image {
                         visible: !model.online
                         source: "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg"
@@ -455,6 +423,85 @@ Item {
                         running: visible
                         Layout.preferredWidth: Math.round(32 * tileScale)
                         Layout.preferredHeight: Math.round(32 * tileScale)
+                    }
+
+                    // Right side: settings info + custom/global toggle
+                    RowLayout {
+                        visible: showPcInfo && model.online && model.paired
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        spacing: 10
+
+                        // Settings summary text on the right
+                        Label {
+                            text: model.settingsSummary || ""
+                            font.pointSize: Math.max(7, Math.round(9 * tileScale))
+                            color: "#9E9E9E"
+                            opacity: 0.8
+                            elide: Label.ElideRight
+                            Layout.maximumWidth: 350
+                        }
+
+                        // Quick toggle: Custom/Global checkbox
+                        Rectangle {
+                            width: listToggleRow.implicitWidth + 12
+                            height: listToggleRow.implicitHeight + 6
+                            radius: 4
+                            color: model.hasClientSettings ? "#1A2196F3" : "#1A666666"
+                            border.color: model.hasClientSettings ? "#2196F3" : "#555555"
+                            border.width: 1
+
+                            RowLayout {
+                                id: listToggleRow
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                Rectangle {
+                                    width: Math.round(14 * tileScale)
+                                    height: Math.round(14 * tileScale)
+                                    radius: 3
+                                    color: model.hasClientSettings ? "#2196F3" : "transparent"
+                                    border.color: model.hasClientSettings ? "#2196F3" : "#888888"
+                                    border.width: 1
+
+                                    Label {
+                                        anchors.centerIn: parent
+                                        text: "✓"
+                                        font.pointSize: Math.max(6, Math.round(8 * tileScale))
+                                        color: "white"
+                                        visible: model.hasClientSettings
+                                    }
+                                }
+
+                                Label {
+                                    text: model.hasClientSettings ? qsTr("Custom") : qsTr("Global")
+                                    font.pointSize: Math.max(7, Math.round(8 * tileScale))
+                                    color: model.hasClientSettings ? "#64B5F6" : "#999999"
+                                }
+                            }
+
+                            MouseArea {
+                                id: listToggleMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (model.hasClientSettings) {
+                                        StreamingPreferences.resetClientSettings(model.uuid)
+                                        computerModel.refreshSort()
+                                    } else {
+                                        clientSettingsDialog.clientName = model.name
+                                        clientSettingsDialog.clientUuid = model.uuid
+                                        clientSettingsDialog.open()
+                                    }
+                                }
+                            }
+
+                            ToolTip.text: model.hasClientSettings ?
+                                qsTr("Click to switch to global settings") :
+                                qsTr("Click to create custom settings for this PC")
+                            ToolTip.visible: listToggleMouseArea.containsMouse
+                            ToolTip.delay: 800
+                        }
                     }
                 }
 
@@ -614,7 +661,7 @@ Item {
                                 anchors.leftMargin: 15
 
                                 Label {
-                                    text: parent.isCollapsed ? "▸" : "▾"
+                                    text: isCollapsed ? "▸" : "▾"
                                     font.pointSize: 14
                                     color: sectionName === qsTr("Online") ? "#4CAF50" :
                                            sectionName === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
@@ -722,20 +769,61 @@ Item {
                                         anchors.margins: 4
                                         spacing: 2
 
-                                        // Global/Custom badge
+                                        // Clickable Global/Custom toggle
                                         Rectangle {
                                             anchors.horizontalCenter: parent.horizontalCenter
-                                            width: gridBadgeLabel.implicitWidth + 8
-                                            height: gridBadgeLabel.implicitHeight + 2
-                                            radius: 2
-                                            color: pcHasClientSettings ? "#2196F3" : "#555555"
+                                            width: gridToggleRow.implicitWidth + 10
+                                            height: gridToggleRow.implicitHeight + 4
+                                            radius: 3
+                                            color: pcHasClientSettings ? "#332196F3" : "#33555555"
+                                            border.color: pcHasClientSettings ? "#2196F3" : "#666666"
+                                            border.width: 1
 
-                                            Label {
-                                                id: gridBadgeLabel
+                                            Row {
+                                                id: gridToggleRow
                                                 anchors.centerIn: parent
-                                                text: pcHasClientSettings ? qsTr("Custom") : qsTr("Global")
-                                                font.pointSize: Math.max(6, Math.round(7 * tileScale))
-                                                color: "white"
+                                                spacing: 3
+
+                                                Rectangle {
+                                                    width: Math.round(12 * tileScale)
+                                                    height: Math.round(12 * tileScale)
+                                                    radius: 2
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    color: pcHasClientSettings ? "#2196F3" : "transparent"
+                                                    border.color: pcHasClientSettings ? "#2196F3" : "#888888"
+                                                    border.width: 1
+
+                                                    Label {
+                                                        anchors.centerIn: parent
+                                                        text: "✓"
+                                                        font.pointSize: Math.max(5, Math.round(6 * tileScale))
+                                                        color: "white"
+                                                        visible: pcHasClientSettings
+                                                    }
+                                                }
+
+                                                Label {
+                                                    text: pcHasClientSettings ? qsTr("Custom") : qsTr("Global")
+                                                    font.pointSize: Math.max(6, Math.round(7 * tileScale))
+                                                    color: pcHasClientSettings ? "#64B5F6" : "#AAAAAA"
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                hoverEnabled: true
+                                                onClicked: {
+                                                    if (pcHasClientSettings) {
+                                                        StreamingPreferences.resetClientSettings(pcUuid)
+                                                        computerModel.refreshSort()
+                                                    } else {
+                                                        clientSettingsDialog.clientName = pcName
+                                                        clientSettingsDialog.clientUuid = pcUuid
+                                                        clientSettingsDialog.open()
+                                                    }
+                                                }
                                             }
                                         }
 

@@ -1954,10 +1954,10 @@ Flickable {
                     Label { text: "Select+L1+R1+B / Hold Esc"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
                 }
 
-                // Custom shortcuts
+                // Additional shortcuts
                 Label {
                     width: parent.width
-                    text: qsTr("Custom Shortcut Overrides")
+                    text: qsTr("Additional Shortcuts")
                     font.pointSize: 12
                     font.bold: true
                     topPadding: 10
@@ -1965,7 +1965,7 @@ Flickable {
 
                 Label {
                     width: parent.width
-                    text: qsTr("Set custom keyboard shortcuts for streaming actions. These override the defaults above. Use modifier+key format (e.g., Ctrl+Alt+Q).")
+                    text: qsTr("Add extra keyboard shortcuts for streaming actions. These work alongside the built-in shortcuts above. Use modifier+key format (e.g., Ctrl+Alt+Q).")
                     font.pointSize: 9
                     wrapMode: Text.Wrap
                     color: "#BBBBBB"
