@@ -445,6 +445,12 @@ void ComputerModel::refreshSort()
     endResetModel();
 }
 
+void ComputerModel::refreshData()
+{
+    if (m_Computers.isEmpty()) return;
+    emit dataChanged(createIndex(0, 0), createIndex(m_Computers.count() - 1, 0));
+}
+
 void ComputerModel::setSortMode(int mode)
 {
     if (m_SortMode != mode) {
