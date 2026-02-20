@@ -190,6 +190,8 @@ void StreamingPreferences::reload()
         videoCodecConfig = VCC_AUTO;
         enableHdr = true;
     }
+
+    emitAllChanged();
 }
 
 bool StreamingPreferences::retranslate()
@@ -478,6 +480,8 @@ void StreamingPreferences::loadForClient(QString clientUuid)
 
     settings.endGroup();
 
+    emitAllChanged();
+
     qInfo() << "Loaded client-specific settings for UUID:" << clientUuid;
 }
 
@@ -566,4 +570,131 @@ bool StreamingPreferences::hasClientSettings(QString clientUuid)
     settings.endGroup();
 
     return hasSettings;
+}
+
+QVariantMap StreamingPreferences::snapshotSettings() const
+{
+    QVariantMap map;
+    map[QStringLiteral("width")] = width;
+    map[QStringLiteral("height")] = height;
+    map[QStringLiteral("fps")] = fps;
+    map[QStringLiteral("bitrateKbps")] = bitrateKbps;
+    map[QStringLiteral("unlockBitrate")] = unlockBitrate;
+    map[QStringLiteral("autoAdjustBitrate")] = autoAdjustBitrate;
+    map[QStringLiteral("enableVsync")] = enableVsync;
+    map[QStringLiteral("gameOptimizations")] = gameOptimizations;
+    map[QStringLiteral("playAudioOnHost")] = playAudioOnHost;
+    map[QStringLiteral("multiController")] = multiController;
+    map[QStringLiteral("enableMdns")] = enableMdns;
+    map[QStringLiteral("quitAppAfter")] = quitAppAfter;
+    map[QStringLiteral("absoluteMouseMode")] = absoluteMouseMode;
+    map[QStringLiteral("absoluteTouchMode")] = absoluteTouchMode;
+    map[QStringLiteral("framePacing")] = framePacing;
+    map[QStringLiteral("connectionWarnings")] = connectionWarnings;
+    map[QStringLiteral("configurationWarnings")] = configurationWarnings;
+    map[QStringLiteral("richPresence")] = richPresence;
+    map[QStringLiteral("gamepadMouse")] = gamepadMouse;
+    map[QStringLiteral("detectNetworkBlocking")] = detectNetworkBlocking;
+    map[QStringLiteral("showPerformanceOverlay")] = showPerformanceOverlay;
+    map[QStringLiteral("packetSize")] = packetSize;
+    map[QStringLiteral("swapMouseButtons")] = swapMouseButtons;
+    map[QStringLiteral("muteOnFocusLoss")] = muteOnFocusLoss;
+    map[QStringLiteral("backgroundGamepad")] = backgroundGamepad;
+    map[QStringLiteral("reverseScrollDirection")] = reverseScrollDirection;
+    map[QStringLiteral("swapFaceButtons")] = swapFaceButtons;
+    map[QStringLiteral("keepAwake")] = keepAwake;
+    map[QStringLiteral("enableHdr")] = enableHdr;
+    map[QStringLiteral("enableYUV444")] = enableYUV444;
+    map[QStringLiteral("audioConfig")] = static_cast<int>(audioConfig);
+    map[QStringLiteral("videoCodecConfig")] = static_cast<int>(videoCodecConfig);
+    map[QStringLiteral("videoDecoderSelection")] = static_cast<int>(videoDecoderSelection);
+    map[QStringLiteral("windowMode")] = static_cast<int>(windowMode);
+    map[QStringLiteral("captureSysKeysMode")] = static_cast<int>(captureSysKeysMode);
+    map[QStringLiteral("uiDisplayMode")] = static_cast<int>(uiDisplayMode);
+    map[QStringLiteral("language")] = static_cast<int>(language);
+    return map;
+}
+
+void StreamingPreferences::restoreSettings(const QVariantMap& map)
+{
+    width = map.value(QStringLiteral("width"), width).toInt();
+    height = map.value(QStringLiteral("height"), height).toInt();
+    fps = map.value(QStringLiteral("fps"), fps).toInt();
+    bitrateKbps = map.value(QStringLiteral("bitrateKbps"), bitrateKbps).toInt();
+    unlockBitrate = map.value(QStringLiteral("unlockBitrate"), unlockBitrate).toBool();
+    autoAdjustBitrate = map.value(QStringLiteral("autoAdjustBitrate"), autoAdjustBitrate).toBool();
+    enableVsync = map.value(QStringLiteral("enableVsync"), enableVsync).toBool();
+    gameOptimizations = map.value(QStringLiteral("gameOptimizations"), gameOptimizations).toBool();
+    playAudioOnHost = map.value(QStringLiteral("playAudioOnHost"), playAudioOnHost).toBool();
+    multiController = map.value(QStringLiteral("multiController"), multiController).toBool();
+    enableMdns = map.value(QStringLiteral("enableMdns"), enableMdns).toBool();
+    quitAppAfter = map.value(QStringLiteral("quitAppAfter"), quitAppAfter).toBool();
+    absoluteMouseMode = map.value(QStringLiteral("absoluteMouseMode"), absoluteMouseMode).toBool();
+    absoluteTouchMode = map.value(QStringLiteral("absoluteTouchMode"), absoluteTouchMode).toBool();
+    framePacing = map.value(QStringLiteral("framePacing"), framePacing).toBool();
+    connectionWarnings = map.value(QStringLiteral("connectionWarnings"), connectionWarnings).toBool();
+    configurationWarnings = map.value(QStringLiteral("configurationWarnings"), configurationWarnings).toBool();
+    richPresence = map.value(QStringLiteral("richPresence"), richPresence).toBool();
+    gamepadMouse = map.value(QStringLiteral("gamepadMouse"), gamepadMouse).toBool();
+    detectNetworkBlocking = map.value(QStringLiteral("detectNetworkBlocking"), detectNetworkBlocking).toBool();
+    showPerformanceOverlay = map.value(QStringLiteral("showPerformanceOverlay"), showPerformanceOverlay).toBool();
+    packetSize = map.value(QStringLiteral("packetSize"), packetSize).toInt();
+    swapMouseButtons = map.value(QStringLiteral("swapMouseButtons"), swapMouseButtons).toBool();
+    muteOnFocusLoss = map.value(QStringLiteral("muteOnFocusLoss"), muteOnFocusLoss).toBool();
+    backgroundGamepad = map.value(QStringLiteral("backgroundGamepad"), backgroundGamepad).toBool();
+    reverseScrollDirection = map.value(QStringLiteral("reverseScrollDirection"), reverseScrollDirection).toBool();
+    swapFaceButtons = map.value(QStringLiteral("swapFaceButtons"), swapFaceButtons).toBool();
+    keepAwake = map.value(QStringLiteral("keepAwake"), keepAwake).toBool();
+    enableHdr = map.value(QStringLiteral("enableHdr"), enableHdr).toBool();
+    enableYUV444 = map.value(QStringLiteral("enableYUV444"), enableYUV444).toBool();
+    audioConfig = static_cast<AudioConfig>(map.value(QStringLiteral("audioConfig"), static_cast<int>(audioConfig)).toInt());
+    videoCodecConfig = static_cast<VideoCodecConfig>(map.value(QStringLiteral("videoCodecConfig"), static_cast<int>(videoCodecConfig)).toInt());
+    videoDecoderSelection = static_cast<VideoDecoderSelection>(map.value(QStringLiteral("videoDecoderSelection"), static_cast<int>(videoDecoderSelection)).toInt());
+    windowMode = static_cast<WindowMode>(map.value(QStringLiteral("windowMode"), static_cast<int>(windowMode)).toInt());
+    captureSysKeysMode = static_cast<CaptureSysKeysMode>(map.value(QStringLiteral("captureSysKeysMode"), static_cast<int>(captureSysKeysMode)).toInt());
+    uiDisplayMode = static_cast<UIDisplayMode>(map.value(QStringLiteral("uiDisplayMode"), static_cast<int>(uiDisplayMode)).toInt());
+    language = static_cast<Language>(map.value(QStringLiteral("language"), static_cast<int>(language)).toInt());
+
+    m_CurrentClientUuid.clear();
+    emitAllChanged();
+
+    qInfo() << "Restored settings from snapshot";
+}
+
+void StreamingPreferences::emitAllChanged()
+{
+    emit displayModeChanged();
+    emit bitrateChanged();
+    emit unlockBitrateChanged();
+    emit autoAdjustBitrateChanged();
+    emit enableVsyncChanged();
+    emit gameOptimizationsChanged();
+    emit playAudioOnHostChanged();
+    emit multiControllerChanged();
+    emit enableMdnsChanged();
+    emit quitAppAfterChanged();
+    emit absoluteMouseModeChanged();
+    emit absoluteTouchModeChanged();
+    emit audioConfigChanged();
+    emit videoCodecConfigChanged();
+    emit enableHdrChanged();
+    emit enableYUV444Changed();
+    emit videoDecoderSelectionChanged();
+    emit uiDisplayModeChanged();
+    emit windowModeChanged();
+    emit framePacingChanged();
+    emit connectionWarningsChanged();
+    emit configurationWarningsChanged();
+    emit richPresenceChanged();
+    emit gamepadMouseChanged();
+    emit detectNetworkBlockingChanged();
+    emit showPerformanceOverlayChanged();
+    emit mouseButtonsChanged();
+    emit muteOnFocusLossChanged();
+    emit backgroundGamepadChanged();
+    emit reverseScrollDirectionChanged();
+    emit swapFaceButtonsChanged();
+    emit captureSysKeysModeChanged();
+    emit keepAwakeChanged();
+    emit languageChanged();
 }
