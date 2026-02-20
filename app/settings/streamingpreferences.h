@@ -25,8 +25,11 @@ public:
     // Per-client settings management
     Q_INVOKABLE void loadForClient(QString clientUuid);
     Q_INVOKABLE void saveForClient(QString clientUuid);
+    Q_INVOKABLE void deactivateClientSettings(QString clientUuid);
+    Q_INVOKABLE void activateClientSettings(QString clientUuid);
     Q_INVOKABLE void resetClientSettings(QString clientUuid);
     Q_INVOKABLE bool hasClientSettings(QString clientUuid);
+    Q_INVOKABLE bool hasSavedClientSettings(QString clientUuid);
     Q_INVOKABLE QString currentClientUuid() const { return m_CurrentClientUuid; }
     Q_INVOKABLE QVariantMap snapshotSettings() const;
     Q_INVOKABLE void restoreSettings(const QVariantMap& settings);

@@ -104,6 +104,10 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         if (computer->uuid.isEmpty()) return false;
         return StreamingPreferences::get()->hasClientSettings(computer->uuid);
     }
+    case HasSavedClientSettingsRole: {
+        if (computer->uuid.isEmpty()) return false;
+        return StreamingPreferences::get()->hasSavedClientSettings(computer->uuid);
+    }
     case SettingsSummaryRole: {
         // Guard against empty UUID (freshly discovered PCs)
         if (computer->uuid.isEmpty()) return QString();
@@ -204,6 +208,7 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[SectionRole] = "section";
     names[HasClientSettingsRole] = "hasClientSettings";
     names[SettingsSummaryRole] = "settingsSummary";
+    names[HasSavedClientSettingsRole] = "hasSavedClientSettings";
 
     return names;
 }
