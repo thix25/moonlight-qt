@@ -1569,53 +1569,73 @@ Flickable {
                     id: controllerAssignmentRepeater
                     model: GamepadMapping.getConnectedGamepads()
 
-                    delegate: Row {
-                        spacing: 10
+                    delegate: Column {
                         width: parent.width
+                        spacing: 2
+                        topPadding: 6
+                        bottomPadding: 6
 
-                        Label {
-                            text: modelData.name
-                            font.pointSize: 11
-                            width: parent.width * 0.5
-                            elide: Text.ElideRight
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            ToolTip.delay: 1000
-                            ToolTip.timeout: 5000
-                            ToolTip.visible: mouseArea.containsMouse
-                            ToolTip.text: qsTr("GUID: ") + modelData.guid
-
-                            MouseArea {
-                                id: mouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                            }
+                        // Separator line between controllers
+                        Rectangle {
+                            width: parent.width
+                            height: 1
+                            color: "#444444"
+                            visible: index > 0
                         }
 
-                        AutoResizingComboBox {
-                            id: playerAssignCombo
-                            textRole: "text"
-                            model: ListModel {
-                                ListElement { text: qsTr("Automatic"); val: -1 }
-                                ListElement { text: qsTr("Player 1"); val: 0 }
-                                ListElement { text: qsTr("Player 2"); val: 1 }
-                                ListElement { text: qsTr("Player 3"); val: 2 }
-                                ListElement { text: qsTr("Player 4"); val: 3 }
-                            }
+                        Row {
+                            spacing: 10
+                            width: parent.width
 
-                            Component.onCompleted: {
-                                var saved = GamepadMapping.getGlobalMapping(modelData.guid)
-                                currentIndex = 0
-                                for (var i = 0; i < model.count; i++) {
-                                    if (model.get(i).val === saved) {
-                                        currentIndex = i
-                                        break
-                                    }
+                            Column {
+                                width: parent.width - playerAssignCombo.width - 10
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Label {
+                                    text: modelData.name
+                                    font.pointSize: 11
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: "GUID: " + modelData.guid
+                                    font.pointSize: 8
+                                    font.family: "Courier New"
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                    color: "#999999"
                                 }
                             }
 
-                            onActivated: {
-                                GamepadMapping.setGlobalMapping(modelData.guid, model.get(currentIndex).val)
+                            AutoResizingComboBox {
+                                id: playerAssignCombo
+                                textRole: "text"
+                                font.pointSize: 11
+                                implicitWidth: Math.max(desiredWidth, 150)
+                                model: ListModel {
+                                    ListElement { text: qsTr("Automatic"); val: -1 }
+                                    ListElement { text: qsTr("Player 1"); val: 0 }
+                                    ListElement { text: qsTr("Player 2"); val: 1 }
+                                    ListElement { text: qsTr("Player 3"); val: 2 }
+                                    ListElement { text: qsTr("Player 4"); val: 3 }
+                                }
+
+                                Component.onCompleted: {
+                                    recalculateWidth()
+                                    var saved = GamepadMapping.getGlobalMapping(modelData.guid)
+                                    currentIndex = 0
+                                    for (var i = 0; i < model.count; i++) {
+                                        if (model.get(i).val === saved) {
+                                            currentIndex = i
+                                            break
+                                        }
+                                    }
+                                }
+
+                                onActivated: {
+                                    GamepadMapping.setGlobalMapping(modelData.guid, model.get(currentIndex).val)
+                                }
                             }
                         }
                     }

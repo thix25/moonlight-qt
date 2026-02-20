@@ -704,51 +704,71 @@ NavigableDialog {
                                 id: clientControllerRepeater
                                 model: GamepadMapping.getConnectedGamepads()
 
-                                delegate: RowLayout {
-                                    spacing: 10
+                                delegate: ColumnLayout {
                                     Layout.fillWidth: true
+                                    spacing: 2
 
-                                    Label {
-                                        text: modelData.name
-                                        font.pointSize: 11
-                                        Layout.preferredWidth: 250
-                                        elide: Text.ElideRight
-
-                                        ToolTip.delay: 1000
-                                        ToolTip.timeout: 5000
-                                        ToolTip.visible: clientMouseArea.containsMouse
-                                        ToolTip.text: qsTr("GUID: ") + modelData.guid
-
-                                        MouseArea {
-                                            id: clientMouseArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                        }
+                                    // Separator line between controllers
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: 1
+                                        color: "#444444"
+                                        visible: index > 0
                                     }
 
-                                    AutoResizingComboBox {
-                                        textRole: "text"
-                                        model: ListModel {
-                                            ListElement { text: qsTr("Automatic"); val: -1 }
-                                            ListElement { text: qsTr("Player 1"); val: 0 }
-                                            ListElement { text: qsTr("Player 2"); val: 1 }
-                                            ListElement { text: qsTr("Player 3"); val: 2 }
-                                            ListElement { text: qsTr("Player 4"); val: 3 }
-                                        }
+                                    RowLayout {
+                                        spacing: 10
+                                        Layout.fillWidth: true
 
-                                        Component.onCompleted: {
-                                            var saved = GamepadMapping.getClientMapping(clientUuid, modelData.guid)
-                                            currentIndex = 0
-                                            for (var i = 0; i < model.count; i++) {
-                                                if (model.get(i).val === saved) {
-                                                    currentIndex = i
-                                                    break
-                                                }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 1
+
+                                            Label {
+                                                text: modelData.name
+                                                font.pointSize: 11
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Label {
+                                                text: "GUID: " + modelData.guid
+                                                font.pointSize: 8
+                                                font.family: "Courier New"
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideRight
+                                                color: "#999999"
                                             }
                                         }
 
-                                        onActivated: {
-                                            GamepadMapping.setClientMapping(clientUuid, modelData.guid, model.get(currentIndex).val)
+                                        AutoResizingComboBox {
+                                            id: clientPlayerAssignCombo
+                                            textRole: "text"
+                                            font.pointSize: 11
+                                            implicitWidth: Math.max(desiredWidth, 150)
+                                            model: ListModel {
+                                                ListElement { text: qsTr("Automatic"); val: -1 }
+                                                ListElement { text: qsTr("Player 1"); val: 0 }
+                                                ListElement { text: qsTr("Player 2"); val: 1 }
+                                                ListElement { text: qsTr("Player 3"); val: 2 }
+                                                ListElement { text: qsTr("Player 4"); val: 3 }
+                                            }
+
+                                            Component.onCompleted: {
+                                                recalculateWidth()
+                                                var saved = GamepadMapping.getClientMapping(clientUuid, modelData.guid)
+                                                currentIndex = 0
+                                                for (var i = 0; i < model.count; i++) {
+                                                    if (model.get(i).val === saved) {
+                                                        currentIndex = i
+                                                        break
+                                                    }
+                                                }
+                                            }
+
+                                            onActivated: {
+                                                GamepadMapping.setClientMapping(clientUuid, modelData.guid, model.get(currentIndex).val)
+                                            }
                                         }
                                     }
                                 }
