@@ -596,6 +596,11 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
         // Update fullscreen state based on client-specific window mode
         m_IsFullScreen = (m_Preferences->windowMode != StreamingPreferences::WM_WINDOWED || !WMUtils::isRunningDesktopEnvironment());
     }
+    else if (!preferences && m_Computer) {
+        qInfo() << "No client-specific settings found for:" << m_Computer->name << "(" << m_Computer->uuid << ")"
+                << "- using global settings (resolution:" << m_Preferences->width << "x" << m_Preferences->height
+                << "fps:" << m_Preferences->fps << ")";
+    }
 }
 
 Session::~Session()
@@ -686,6 +691,12 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
     qInfo() << "Server GPU:" << m_Computer->gpuModel;
     qInfo() << "Server GFE version:" << m_Computer->gfeVersion;
+    qInfo() << "Stream request:" << m_StreamConfig.width << "x" << m_StreamConfig.height
+            << "@" << m_Preferences->fps << "fps"
+            << "codec:" << static_cast<int>(m_Preferences->videoCodecConfig)
+            << "bitrate:" << m_Preferences->bitrateKbps << "kbps"
+            << "hdr:" << m_Preferences->enableHdr
+            << "yuv444:" << m_Preferences->enableYUV444;
 
     LiInitializeVideoCallbacks(&m_VideoCallbacks);
     m_VideoCallbacks.setup = drSetup;

@@ -101,21 +101,49 @@ NavigableDialog {
     }
     
     function updateUIFromPreferences() {
-        // Video settings
-        resolutionComboBox.currentIndex = 0
+        // Video settings - find matching resolution or create custom entry
+        var resFound = false
         for (var i = 0; i < resolutionListModel.count; i++) {
-            if (resolutionListModel.get(i).width === StreamingPreferences.width &&
-                resolutionListModel.get(i).height === StreamingPreferences.height) {
+            if (resolutionListModel.get(i).is_custom) continue
+            if (parseInt(resolutionListModel.get(i).video_width) === StreamingPreferences.width &&
+                parseInt(resolutionListModel.get(i).video_height) === StreamingPreferences.height) {
                 resolutionComboBox.currentIndex = i
+                resFound = true
                 break
             }
         }
+        if (!resFound) {
+            // Update the custom entry with the saved custom resolution
+            for (i = 0; i < resolutionListModel.count; i++) {
+                if (resolutionListModel.get(i).is_custom) {
+                    resolutionListModel.setProperty(i, "video_width", "" + StreamingPreferences.width)
+                    resolutionListModel.setProperty(i, "video_height", "" + StreamingPreferences.height)
+                    resolutionListModel.setProperty(i, "text", qsTr("Custom (%1x%2)").arg(StreamingPreferences.width).arg(StreamingPreferences.height))
+                    resolutionComboBox.currentIndex = i
+                    break
+                }
+            }
+        }
         
-        fpsComboBox.currentIndex = 0
+        // FPS - find matching FPS or create custom entry
+        var fpsFound = false
         for (i = 0; i < fpsListModel.count; i++) {
-            if (fpsListModel.get(i).fps === StreamingPreferences.fps) {
+            if (fpsListModel.get(i).is_custom) continue
+            if (parseInt(fpsListModel.get(i).video_fps) === StreamingPreferences.fps) {
                 fpsComboBox.currentIndex = i
+                fpsFound = true
                 break
+            }
+        }
+        if (!fpsFound) {
+            // Update the custom entry with the saved custom FPS
+            for (i = 0; i < fpsListModel.count; i++) {
+                if (fpsListModel.get(i).is_custom) {
+                    fpsListModel.setProperty(i, "video_fps", "" + StreamingPreferences.fps)
+                    fpsListModel.setProperty(i, "text", qsTr("Custom (%1 FPS)").arg(StreamingPreferences.fps))
+                    fpsComboBox.currentIndex = i
+                    break
+                }
             }
         }
         
@@ -199,9 +227,9 @@ NavigableDialog {
     
     function updatePreferencesFromUI() {
         // Video settings
-        StreamingPreferences.width = resolutionListModel.get(resolutionComboBox.currentIndex).width
-        StreamingPreferences.height = resolutionListModel.get(resolutionComboBox.currentIndex).height
-        StreamingPreferences.fps = fpsListModel.get(fpsComboBox.currentIndex).fps
+        StreamingPreferences.width = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_width)
+        StreamingPreferences.height = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_height)
+        StreamingPreferences.fps = parseInt(fpsListModel.get(fpsComboBox.currentIndex).video_fps)
         StreamingPreferences.bitrateKbps = bitrateSlider.value
         StreamingPreferences.videoCodecConfig = codecListModel.get(codecComboBox.currentIndex).val
         StreamingPreferences.enableHdr = enableHdrCheckbox.checked
@@ -309,15 +337,133 @@ NavigableDialog {
                         
                         AutoResizingComboBox {
                             id: resolutionComboBox
+                            property int lastIndexValue: 0
                             Layout.fillWidth: true
                             textRole: "text"
                             model: ListModel {
                                 id: resolutionListModel
-                                ListElement { text: "720p (1280x720)"; width: 1280; height: 720 }
-                                ListElement { text: "1080p (1920x1080)"; width: 1920; height: 1080 }
-                                ListElement { text: "1440p (2560x1440)"; width: 2560; height: 1440 }
-                                ListElement { text: "4K (3840x2160)"; width: 3840; height: 2160 }
-                                ListElement { text: "8K (7680x4320)"; width: 7680; height: 4320 }
+                                ListElement { text: "720p (1280x720)"; video_width: "1280"; video_height: "720"; is_custom: false }
+                                ListElement { text: "1080p (1920x1080)"; video_width: "1920"; video_height: "1080"; is_custom: false }
+                                ListElement { text: "1440p (2560x1440)"; video_width: "2560"; video_height: "1440"; is_custom: false }
+                                ListElement { text: "4K (3840x2160)"; video_width: "3840"; video_height: "2160"; is_custom: false }
+                                ListElement { text: "8K (7680x4320)"; video_width: "7680"; video_height: "4320"; is_custom: false }
+                                ListElement { text: qsTr("Custom"); video_width: ""; video_height: ""; is_custom: true }
+                            }
+
+                            onActivated: {
+                                if (resolutionListModel.get(currentIndex).is_custom) {
+                                    customResolutionDialog.open()
+                                } else {
+                                    lastIndexValue = currentIndex
+                                }
+                            }
+
+                            NavigableDialog {
+                                id: customResolutionDialog
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+
+                                onOpened: {
+                                    customWidthField.forceActiveFocus()
+                                    if (customResolutionDialog.standardButton) {
+                                        customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                    }
+                                }
+
+                                onClosed: {
+                                    customWidthField.clear()
+                                    customHeightField.clear()
+                                }
+
+                                onRejected: {
+                                    resolutionComboBox.currentIndex = resolutionComboBox.lastIndexValue
+                                }
+
+                                function isInputValid() {
+                                    if ((!customWidthField.acceptableInput && customWidthField.text) ||
+                                            (!customHeightField.acceptableInput && customHeightField.text)) {
+                                        return false
+                                    }
+                                    if ((!customWidthField.text && !customWidthField.placeholderText) ||
+                                            (!customHeightField.text && !customHeightField.placeholderText)) {
+                                        return false
+                                    }
+                                    return true
+                                }
+
+                                onAccepted: {
+                                    if (!isInputValid()) {
+                                        reject()
+                                        return
+                                    }
+                                    var w = customWidthField.text ? customWidthField.text : customWidthField.placeholderText
+                                    var h = customHeightField.text ? customHeightField.text : customHeightField.placeholderText
+                                    for (var i = 0; i < resolutionListModel.count; i++) {
+                                        if (resolutionListModel.get(i).is_custom) {
+                                            resolutionListModel.setProperty(i, "video_width", w)
+                                            resolutionListModel.setProperty(i, "video_height", h)
+                                            resolutionListModel.setProperty(i, "text", qsTr("Custom (%1x%2)").arg(w).arg(h))
+                                            resolutionComboBox.currentIndex = i
+                                            resolutionComboBox.lastIndexValue = i
+                                            break
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Label {
+                                        text: qsTr("Custom resolutions are not officially supported by GeForce Experience, so it will not set your host display resolution. You will need to set it manually while in game.") + "\n\n" +
+                                              qsTr("Resolutions that are not supported by your client or host PC may cause streaming errors.") + "\n"
+                                        wrapMode: Label.WordWrap
+                                        Layout.maximumWidth: 300
+                                    }
+
+                                    Label {
+                                        text: qsTr("Enter a custom resolution:")
+                                        font.bold: true
+                                    }
+
+                                    RowLayout {
+                                        TextField {
+                                            id: customWidthField
+                                            maximumLength: 5
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: resolutionListModel.get(resolutionComboBox.currentIndex).video_width
+                                            validator: IntValidator { bottom: 256; top: 8192 }
+                                            focus: true
+
+                                            onTextChanged: {
+                                                if (customResolutionDialog.standardButton) {
+                                                    customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customResolutionDialog.accept()
+                                            Keys.onEnterPressed: customResolutionDialog.accept()
+                                        }
+
+                                        Label {
+                                            text: "x"
+                                            font.bold: true
+                                        }
+
+                                        TextField {
+                                            id: customHeightField
+                                            maximumLength: 5
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: resolutionListModel.get(resolutionComboBox.currentIndex).video_height
+                                            validator: IntValidator { bottom: 256; top: 8192 }
+
+                                            onTextChanged: {
+                                                if (customResolutionDialog.standardButton) {
+                                                    customResolutionDialog.standardButton(Dialog.Ok).enabled = customResolutionDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customResolutionDialog.accept()
+                                            Keys.onEnterPressed: customResolutionDialog.accept()
+                                        }
+                                    }
+                                }
                             }
                         }
                         
@@ -328,16 +474,100 @@ NavigableDialog {
                         
                         AutoResizingComboBox {
                             id: fpsComboBox
+                            property int lastIndexValue: 0
                             Layout.fillWidth: true
                             textRole: "text"
                             model: ListModel {
                                 id: fpsListModel
-                                ListElement { text: "30 FPS"; fps: 30 }
-                                ListElement { text: "60 FPS"; fps: 60 }
-                                ListElement { text: "90 FPS"; fps: 90 }
-                                ListElement { text: "100 FPS"; fps: 100 }
-                                ListElement { text: "120 FPS"; fps: 120 }
-                                ListElement { text: "144 FPS"; fps: 144 }
+                                ListElement { text: "30 FPS"; video_fps: "30"; is_custom: false }
+                                ListElement { text: "60 FPS"; video_fps: "60"; is_custom: false }
+                                ListElement { text: "90 FPS"; video_fps: "90"; is_custom: false }
+                                ListElement { text: "100 FPS"; video_fps: "100"; is_custom: false }
+                                ListElement { text: "120 FPS"; video_fps: "120"; is_custom: false }
+                                ListElement { text: "144 FPS"; video_fps: "144"; is_custom: false }
+                                ListElement { text: qsTr("Custom"); video_fps: ""; is_custom: true }
+                            }
+
+                            onActivated: {
+                                if (fpsListModel.get(currentIndex).is_custom) {
+                                    customFpsDialog.open()
+                                } else {
+                                    lastIndexValue = currentIndex
+                                }
+                            }
+
+                            NavigableDialog {
+                                id: customFpsDialog
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+
+                                onOpened: {
+                                    customFpsField.forceActiveFocus()
+                                    if (customFpsDialog.standardButton) {
+                                        customFpsDialog.standardButton(Dialog.Ok).enabled = customFpsDialog.isInputValid()
+                                    }
+                                }
+
+                                onClosed: {
+                                    customFpsField.clear()
+                                }
+
+                                onRejected: {
+                                    fpsComboBox.currentIndex = fpsComboBox.lastIndexValue
+                                }
+
+                                function isInputValid() {
+                                    if (!customFpsField.acceptableInput && customFpsField.text) {
+                                        return false
+                                    }
+                                    if (!customFpsField.text && !customFpsField.placeholderText) {
+                                        return false
+                                    }
+                                    return true
+                                }
+
+                                onAccepted: {
+                                    if (!isInputValid()) {
+                                        reject()
+                                        return
+                                    }
+                                    var fps = customFpsField.text ? customFpsField.text : customFpsField.placeholderText
+                                    for (var i = 0; i < fpsListModel.count; i++) {
+                                        if (fpsListModel.get(i).is_custom) {
+                                            fpsListModel.setProperty(i, "video_fps", fps)
+                                            fpsListModel.setProperty(i, "text", qsTr("Custom (%1 FPS)").arg(fps))
+                                            fpsComboBox.currentIndex = i
+                                            fpsComboBox.lastIndexValue = i
+                                            break
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Label {
+                                        text: qsTr("Enter a custom frame rate:")
+                                        font.bold: true
+                                    }
+
+                                    RowLayout {
+                                        TextField {
+                                            id: customFpsField
+                                            maximumLength: 4
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            placeholderText: fpsListModel.get(fpsComboBox.currentIndex).video_fps
+                                            validator: IntValidator { bottom: 10; top: 9999 }
+                                            focus: true
+
+                                            onTextChanged: {
+                                                if (customFpsDialog.standardButton) {
+                                                    customFpsDialog.standardButton(Dialog.Ok).enabled = customFpsDialog.isInputValid()
+                                                }
+                                            }
+
+                                            Keys.onReturnPressed: customFpsDialog.accept()
+                                            Keys.onEnterPressed: customFpsDialog.accept()
+                                        }
+                                    }
+                                }
                             }
                         }
                         
@@ -443,9 +673,9 @@ NavigableDialog {
                             text: qsTr("Use Default Bitrate")
                             font.pointSize: 10
                             onClicked: {
-                                var selectedWidth = resolutionListModel.get(resolutionComboBox.currentIndex).width
-                                var selectedHeight = resolutionListModel.get(resolutionComboBox.currentIndex).height
-                                var selectedFps = fpsListModel.get(fpsComboBox.currentIndex).fps
+                                var selectedWidth = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_width)
+                                var selectedHeight = parseInt(resolutionListModel.get(resolutionComboBox.currentIndex).video_height)
+                                var selectedFps = parseInt(fpsListModel.get(fpsComboBox.currentIndex).video_fps)
                                 StreamingPreferences.autoAdjustBitrate = true
                                 bitrateSlider.value = StreamingPreferences.getDefaultBitrate(
                                     selectedWidth, selectedHeight, selectedFps, enableYUV444Checkbox.checked)
