@@ -4,6 +4,7 @@ import QtQuick.Window 2.2
 
 import SdlGamepadKeyNavigation 1.0
 import Session 1.0
+import StreamingPreferences 1.0
 
 Item {
     property Session session
@@ -63,6 +64,9 @@ Item {
         if (portTestResult !== 0 && portTestResult !== -1 && streamSegueErrorDialog.text) {
             streamSegueErrorDialog.text += "\n\n" + qsTr("This PC's Internet connection is blocking Moonlight. Streaming over the Internet may not work while connected to this network.")
         }
+
+        // Restore global settings if they were overridden by per-client settings during streaming
+        StreamingPreferences.reload()
 
         // Re-enable GUI gamepad usage now
         SdlGamepadKeyNavigation.enable()

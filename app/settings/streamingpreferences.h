@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QRect>
+#include <QVariant>
 #include <QQmlEngine>
 
 class QSettings;
@@ -18,7 +19,7 @@ public:
 
     Q_INVOKABLE void save();
 
-    void reload();
+    Q_INVOKABLE void reload();
 
     // Per-client settings management
     Q_INVOKABLE void loadForClient(QString clientUuid);
@@ -26,6 +27,8 @@ public:
     Q_INVOKABLE void resetClientSettings(QString clientUuid);
     Q_INVOKABLE bool hasClientSettings(QString clientUuid);
     Q_INVOKABLE QString currentClientUuid() const { return m_CurrentClientUuid; }
+    Q_INVOKABLE QVariantMap snapshotSettings() const;
+    Q_INVOKABLE void restoreSettings(const QVariantMap& settings);
 
     enum AudioConfig
     {
@@ -238,6 +241,7 @@ private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
 
     QString getSuffixFromLanguage(Language lang);
+    void emitAllChanged();
 
     QQmlEngine* m_QmlEngine;
     QString m_CurrentClientUuid;
