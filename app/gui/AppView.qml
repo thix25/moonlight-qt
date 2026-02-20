@@ -9,14 +9,14 @@ import SdlGamepadKeyNavigation 1.0
 import StreamingPreferences 1.0
 
 Item {
-    property int computerIndex
+    property string computerUuid
     property AppModel appModel : createModel()
     property bool activated
     property bool showHiddenGames
     property bool showGames
 
     // Dynamic tile sizing based on preference scale (50-200%)
-    property real tileScale: StreamingPreferences.appTileScale / 100.0
+    property real tileScale: tileSizeSlider.value / 100.0
     property int gridCellWidth: Math.round(230 * tileScale)
     property int gridCellHeight: Math.round(297 * tileScale)
     property int gridItemWidth: Math.round(220 * tileScale)
@@ -69,7 +69,7 @@ Item {
     function createModel()
     {
         var model = Qt.createQmlObject('import AppModel 1.0; AppModel {}', parent, '')
-        model.initialize(ComputerManager, computerIndex, showHiddenGames)
+        model.initialize(ComputerManager, computerUuid, showHiddenGames)
         return model
     }
 
@@ -258,6 +258,8 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: Math.round(10 * tileScale)
                     source: model.boxart
+                    width: gridIconWidth
+                    height: gridIconHeight
 
                     onSourceSizeChanged: {
                         if (!model.appCollectorGame &&
@@ -271,9 +273,6 @@ Item {
                         {
                             isPlaceholder = false
                         }
-
-                        width = gridIconWidth
-                        height = gridIconHeight
                     }
 
                     ToolTip.text: model.name

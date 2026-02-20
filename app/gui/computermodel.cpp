@@ -96,12 +96,9 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
     case UuidRole:
         return computer->uuid;
     case SectionRole: {
-        if (computer->state == NvComputer::CS_ONLINE && computer->pairState == NvComputer::PS_PAIRED)
-            return tr("Online");
-        else if (computer->state == NvComputer::CS_ONLINE && computer->pairState != NvComputer::PS_PAIRED)
-            return tr("Not Paired");
-        else
-            return tr("Offline");
+        // Return cached section from last sort to prevent race conditions
+        // between sorting and data display
+        return m_CachedSections.value(computer->uuid, tr("Offline"));
     }
     default:
         return QVariant();
@@ -252,11 +249,57 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 {
     QVector<NvComputer*> newComputerList = m_ComputerManager->getComputers();
 
-    // Always reset the model to apply section ordering
-    beginResetModel();
-    m_Computers = newComputerList;
-    sortComputers();
-    endResetModel();
+    // Check if computers were added or removed
+    bool listChanged = (newComputerList.count() != m_Computers.count());
+    if (!listChanged) {
+        QSet<NvComputer*> oldSet(m_Computers.begin(), m_Computers.end());
+        QSet<NvComputer*> newSet(newComputerList.begin(), newComputerList.end());
+        listChanged = (oldSet != newSet);
+    }
+
+    if (listChanged) {
+        // Computers added/removed - full reset required
+        beginResetModel();
+        m_Computers = newComputerList;
+        sortComputers();
+        endResetModel();
+        return;
+    }
+
+    // Same computers. Check if any section assignment changed
+    // (which would require re-sorting for proper grouping)
+    bool sectionChanged = false;
+    for (NvComputer* pc : m_Computers) {
+        QReadLocker lock(&pc->lock);
+        QString cachedSection = m_CachedSections.value(pc->uuid);
+        QString currentSection;
+        if (pc->state == NvComputer::CS_ONLINE && pc->pairState == NvComputer::PS_PAIRED)
+            currentSection = tr("Online");
+        else if (pc->state == NvComputer::CS_ONLINE && pc->pairState != NvComputer::PS_PAIRED)
+            currentSection = tr("Not Paired");
+        else
+            currentSection = tr("Offline");
+
+        if (cachedSection != currentSection) {
+            sectionChanged = true;
+            break;
+        }
+    }
+
+    if (sectionChanged) {
+        // Section changed - re-sort needed for proper grouping
+        beginResetModel();
+        sortComputers();
+        endResetModel();
+    } else {
+        // No structural changes - just emit dataChanged for the specific computer
+        for (int i = 0; i < m_Computers.count(); i++) {
+            if (m_Computers[i] == computer) {
+                emit dataChanged(createIndex(i, 0), createIndex(i, 0));
+                break;
+            }
+        }
+    }
 }
 
 void ComputerModel::sortComputers()
@@ -264,25 +307,42 @@ void ComputerModel::sortComputers()
     StreamingPreferences* prefs = StreamingPreferences::get();
     bool showSections = prefs->pcShowSections;
 
+    // Snapshot section assignments BEFORE sorting to prevent race conditions.
+    // Computer state can change on background threads between comparator calls,
+    // making the sort inconsistent if we read state inside the comparator.
+    QHash<QString, int> sectionOrder;
+    m_CachedSections.clear();
+    for (NvComputer* pc : m_Computers) {
+        QReadLocker lock(&pc->lock);
+        if (pc->state == NvComputer::CS_ONLINE && pc->pairState == NvComputer::PS_PAIRED) {
+            sectionOrder[pc->uuid] = 0;
+            m_CachedSections[pc->uuid] = tr("Online");
+        } else if (pc->state == NvComputer::CS_ONLINE && pc->pairState != NvComputer::PS_PAIRED) {
+            sectionOrder[pc->uuid] = 1;
+            m_CachedSections[pc->uuid] = tr("Not Paired");
+        } else {
+            sectionOrder[pc->uuid] = 2;
+            m_CachedSections[pc->uuid] = tr("Offline");
+        }
+    }
+
     if (m_SortMode == 1 && !m_CustomOrder.isEmpty()) {
         // Custom sort order
         std::sort(m_Computers.begin(), m_Computers.end(),
-                  [this, showSections](NvComputer* a, NvComputer* b) {
-            QReadLocker lockA(&a->lock);
-            QReadLocker lockB(&b->lock);
-
+                  [this, showSections, &sectionOrder](NvComputer* a, NvComputer* b) {
             if (showSections) {
-                // First group by section
-                int sectionA = (a->state == NvComputer::CS_ONLINE && a->pairState == NvComputer::PS_PAIRED) ? 0 :
-                               (a->state == NvComputer::CS_ONLINE) ? 1 : 2;
-                int sectionB = (b->state == NvComputer::CS_ONLINE && b->pairState == NvComputer::PS_PAIRED) ? 0 :
-                               (b->state == NvComputer::CS_ONLINE) ? 1 : 2;
-                if (sectionA != sectionB) return sectionA < sectionB;
+                int secA = sectionOrder.value(a->uuid, 2);
+                int secB = sectionOrder.value(b->uuid, 2);
+                if (secA != secB) return secA < secB;
             }
 
             int idxA = m_CustomOrder.indexOf(a->uuid);
             int idxB = m_CustomOrder.indexOf(b->uuid);
-            if (idxA < 0 && idxB < 0) return a->name.toLower() < b->name.toLower();
+            if (idxA < 0 && idxB < 0) {
+                QReadLocker lockA(&a->lock);
+                QReadLocker lockB(&b->lock);
+                return a->name.toLower() < b->name.toLower();
+            }
             if (idxA < 0) return false;
             if (idxB < 0) return true;
             return idxA < idxB;
@@ -290,21 +350,25 @@ void ComputerModel::sortComputers()
     } else {
         // Alphabetical sort with optional section grouping
         std::sort(m_Computers.begin(), m_Computers.end(),
-                  [showSections](NvComputer* a, NvComputer* b) {
-            QReadLocker lockA(&a->lock);
-            QReadLocker lockB(&b->lock);
-
+                  [showSections, &sectionOrder](NvComputer* a, NvComputer* b) {
             if (showSections) {
-                int sectionA = (a->state == NvComputer::CS_ONLINE && a->pairState == NvComputer::PS_PAIRED) ? 0 :
-                               (a->state == NvComputer::CS_ONLINE) ? 1 : 2;
-                int sectionB = (b->state == NvComputer::CS_ONLINE && b->pairState == NvComputer::PS_PAIRED) ? 0 :
-                               (b->state == NvComputer::CS_ONLINE) ? 1 : 2;
-                if (sectionA != sectionB) return sectionA < sectionB;
+                int secA = sectionOrder.value(a->uuid, 2);
+                int secB = sectionOrder.value(b->uuid, 2);
+                if (secA != secB) return secA < secB;
             }
 
+            QReadLocker lockA(&a->lock);
+            QReadLocker lockB(&b->lock);
             return a->name.toLower() < b->name.toLower();
         });
     }
+}
+
+void ComputerModel::refreshSort()
+{
+    beginResetModel();
+    sortComputers();
+    endResetModel();
 }
 
 void ComputerModel::setSortMode(int mode)
