@@ -29,55 +29,45 @@ NavigableDialog {
         reset.connect(function() {
             // Reset to global defaults
             if (clientUuid !== "") {
+                // resetClientSettings() already calls reload() internally when UUID matches
                 StreamingPreferences.resetClientSettings(clientUuid)
                 hasCustomSettings = false
                 useGlobalSettings = true
-                StreamingPreferences.reload()
                 updateUIFromPreferences()
             }
         })
+
+        // Populate combo box models using enum constants for future-proofing
+        codecListModel.clear()
+        codecListModel.append({text: qsTr("Automatic"), val: StreamingPreferences.VCC_AUTO})
+        codecListModel.append({text: "H.264", val: StreamingPreferences.VCC_FORCE_H264})
+        codecListModel.append({text: "HEVC (H.265)", val: StreamingPreferences.VCC_FORCE_HEVC})
+        codecListModel.append({text: "AV1", val: StreamingPreferences.VCC_FORCE_AV1})
+
+        decoderListModel.clear()
+        decoderListModel.append({text: qsTr("Automatic (Recommended)"), val: StreamingPreferences.VDS_AUTO})
+        decoderListModel.append({text: qsTr("Force software decoding"), val: StreamingPreferences.VDS_FORCE_SOFTWARE})
+        decoderListModel.append({text: qsTr("Force hardware decoding"), val: StreamingPreferences.VDS_FORCE_HARDWARE})
+
+        windowModeListModel.clear()
+        windowModeListModel.append({text: qsTr("Fullscreen"), val: StreamingPreferences.WM_FULLSCREEN})
+        windowModeListModel.append({text: qsTr("Borderless windowed"), val: StreamingPreferences.WM_FULLSCREEN_DESKTOP})
+        windowModeListModel.append({text: qsTr("Windowed"), val: StreamingPreferences.WM_WINDOWED})
+
+        audioListModel.clear()
+        audioListModel.append({text: qsTr("Stereo"), val: StreamingPreferences.AC_STEREO})
+        audioListModel.append({text: qsTr("5.1 surround sound"), val: StreamingPreferences.AC_51_SURROUND})
+        audioListModel.append({text: qsTr("7.1 surround sound"), val: StreamingPreferences.AC_71_SURROUND})
+
+        captureSysKeysModeListModel.clear()
+        captureSysKeysModeListModel.append({text: qsTr("in fullscreen"), val: StreamingPreferences.CSK_FULLSCREEN})
+        captureSysKeysModeListModel.append({text: qsTr("always"), val: StreamingPreferences.CSK_ALWAYS})
     }
     
     onOpened: {
-        // Load client-specific settings when dialog opens
         if (clientUuid !== "") {
-            // Save current global settings before loading client settings
-            originalGlobalSettings = {
-                width: StreamingPreferences.width,
-                height: StreamingPreferences.height,
-                fps: StreamingPreferences.fps,
-                bitrateKbps: StreamingPreferences.bitrateKbps,
-                unlockBitrate: StreamingPreferences.unlockBitrate,
-                autoAdjustBitrate: StreamingPreferences.autoAdjustBitrate,
-                enableVsync: StreamingPreferences.enableVsync,
-                gameOptimizations: StreamingPreferences.gameOptimizations,
-                playAudioOnHost: StreamingPreferences.playAudioOnHost,
-                multiController: StreamingPreferences.multiController,
-                enableMdns: StreamingPreferences.enableMdns,
-                quitAppAfter: StreamingPreferences.quitAppAfter,
-                absoluteMouseMode: StreamingPreferences.absoluteMouseMode,
-                absoluteTouchMode: StreamingPreferences.absoluteTouchMode,
-                framePacing: StreamingPreferences.framePacing,
-                connectionWarnings: StreamingPreferences.connectionWarnings,
-                configurationWarnings: StreamingPreferences.configurationWarnings,
-                richPresence: StreamingPreferences.richPresence,
-                gamepadMouse: StreamingPreferences.gamepadMouse,
-                detectNetworkBlocking: StreamingPreferences.detectNetworkBlocking,
-                showPerformanceOverlay: StreamingPreferences.showPerformanceOverlay,
-                swapMouseButtons: StreamingPreferences.swapMouseButtons,
-                muteOnFocusLoss: StreamingPreferences.muteOnFocusLoss,
-                backgroundGamepad: StreamingPreferences.backgroundGamepad,
-                reverseScrollDirection: StreamingPreferences.reverseScrollDirection,
-                swapFaceButtons: StreamingPreferences.swapFaceButtons,
-                keepAwake: StreamingPreferences.keepAwake,
-                enableHdr: StreamingPreferences.enableHdr,
-                enableYUV444: StreamingPreferences.enableYUV444,
-                audioConfig: StreamingPreferences.audioConfig,
-                videoCodecConfig: StreamingPreferences.videoCodecConfig,
-                videoDecoderSelection: StreamingPreferences.videoDecoderSelection,
-                windowMode: StreamingPreferences.windowMode,
-                captureSysKeysMode: StreamingPreferences.captureSysKeysMode
-            }
+            // Snapshot all global settings at once (replaces manual field-by-field backup)
+            originalGlobalSettings = StreamingPreferences.snapshotSettings()
             
             hasCustomSettings = StreamingPreferences.hasClientSettings(clientUuid)
             useGlobalSettings = !hasCustomSettings
@@ -90,94 +80,24 @@ NavigableDialog {
     }
     
     onAccepted: {
-        // Only save settings if not using global settings
         if (!useGlobalSettings && clientUuid !== "") {
             updatePreferencesFromUI()
             StreamingPreferences.saveForClient(clientUuid)
-            // Restore original global settings after saving client settings
-            if (originalGlobalSettings) {
-                StreamingPreferences.width = originalGlobalSettings.width
-                StreamingPreferences.height = originalGlobalSettings.height
-                StreamingPreferences.fps = originalGlobalSettings.fps
-                StreamingPreferences.bitrateKbps = originalGlobalSettings.bitrateKbps
-                StreamingPreferences.unlockBitrate = originalGlobalSettings.unlockBitrate
-                StreamingPreferences.autoAdjustBitrate = originalGlobalSettings.autoAdjustBitrate
-                StreamingPreferences.enableVsync = originalGlobalSettings.enableVsync
-                StreamingPreferences.gameOptimizations = originalGlobalSettings.gameOptimizations
-                StreamingPreferences.playAudioOnHost = originalGlobalSettings.playAudioOnHost
-                StreamingPreferences.multiController = originalGlobalSettings.multiController
-                StreamingPreferences.enableMdns = originalGlobalSettings.enableMdns
-                StreamingPreferences.quitAppAfter = originalGlobalSettings.quitAppAfter
-                StreamingPreferences.absoluteMouseMode = originalGlobalSettings.absoluteMouseMode
-                StreamingPreferences.absoluteTouchMode = originalGlobalSettings.absoluteTouchMode
-                StreamingPreferences.framePacing = originalGlobalSettings.framePacing
-                StreamingPreferences.connectionWarnings = originalGlobalSettings.connectionWarnings
-                StreamingPreferences.configurationWarnings = originalGlobalSettings.configurationWarnings
-                StreamingPreferences.richPresence = originalGlobalSettings.richPresence
-                StreamingPreferences.gamepadMouse = originalGlobalSettings.gamepadMouse
-                StreamingPreferences.detectNetworkBlocking = originalGlobalSettings.detectNetworkBlocking
-                StreamingPreferences.showPerformanceOverlay = originalGlobalSettings.showPerformanceOverlay
-                StreamingPreferences.swapMouseButtons = originalGlobalSettings.swapMouseButtons
-                StreamingPreferences.muteOnFocusLoss = originalGlobalSettings.muteOnFocusLoss
-                StreamingPreferences.backgroundGamepad = originalGlobalSettings.backgroundGamepad
-                StreamingPreferences.reverseScrollDirection = originalGlobalSettings.reverseScrollDirection
-                StreamingPreferences.swapFaceButtons = originalGlobalSettings.swapFaceButtons
-                StreamingPreferences.keepAwake = originalGlobalSettings.keepAwake
-                StreamingPreferences.enableHdr = originalGlobalSettings.enableHdr
-                StreamingPreferences.enableYUV444 = originalGlobalSettings.enableYUV444
-                StreamingPreferences.audioConfig = originalGlobalSettings.audioConfig
-                StreamingPreferences.videoCodecConfig = originalGlobalSettings.videoCodecConfig
-                StreamingPreferences.videoDecoderSelection = originalGlobalSettings.videoDecoderSelection
-                StreamingPreferences.windowMode = originalGlobalSettings.windowMode
-                StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
-            }
         } else if (useGlobalSettings && hasCustomSettings && clientUuid !== "") {
             // User switched to global settings, remove custom settings
             StreamingPreferences.resetClientSettings(clientUuid)
         }
-        // Reload global settings after saving
-        StreamingPreferences.reload()
+        // Restore the original global settings (clears client UUID state and emits signals)
+        if (originalGlobalSettings) {
+            StreamingPreferences.restoreSettings(originalGlobalSettings)
+        }
     }
     
     onRejected: {
-        // Restore original global settings
+        // Restore the original global settings (clears client UUID state and emits signals)
         if (clientUuid !== "" && originalGlobalSettings) {
-            StreamingPreferences.width = originalGlobalSettings.width
-            StreamingPreferences.height = originalGlobalSettings.height
-            StreamingPreferences.fps = originalGlobalSettings.fps
-            StreamingPreferences.bitrateKbps = originalGlobalSettings.bitrateKbps
-            StreamingPreferences.unlockBitrate = originalGlobalSettings.unlockBitrate
-            StreamingPreferences.autoAdjustBitrate = originalGlobalSettings.autoAdjustBitrate
-            StreamingPreferences.enableVsync = originalGlobalSettings.enableVsync
-            StreamingPreferences.gameOptimizations = originalGlobalSettings.gameOptimizations
-            StreamingPreferences.playAudioOnHost = originalGlobalSettings.playAudioOnHost
-            StreamingPreferences.multiController = originalGlobalSettings.multiController
-            StreamingPreferences.enableMdns = originalGlobalSettings.enableMdns
-            StreamingPreferences.quitAppAfter = originalGlobalSettings.quitAppAfter
-            StreamingPreferences.absoluteMouseMode = originalGlobalSettings.absoluteMouseMode
-            StreamingPreferences.absoluteTouchMode = originalGlobalSettings.absoluteTouchMode
-            StreamingPreferences.framePacing = originalGlobalSettings.framePacing
-            StreamingPreferences.connectionWarnings = originalGlobalSettings.connectionWarnings
-            StreamingPreferences.configurationWarnings = originalGlobalSettings.configurationWarnings
-            StreamingPreferences.richPresence = originalGlobalSettings.richPresence
-            StreamingPreferences.gamepadMouse = originalGlobalSettings.gamepadMouse
-            StreamingPreferences.detectNetworkBlocking = originalGlobalSettings.detectNetworkBlocking
-            StreamingPreferences.showPerformanceOverlay = originalGlobalSettings.showPerformanceOverlay
-            StreamingPreferences.swapMouseButtons = originalGlobalSettings.swapMouseButtons
-            StreamingPreferences.muteOnFocusLoss = originalGlobalSettings.muteOnFocusLoss
-            StreamingPreferences.backgroundGamepad = originalGlobalSettings.backgroundGamepad
-            StreamingPreferences.reverseScrollDirection = originalGlobalSettings.reverseScrollDirection
-            StreamingPreferences.swapFaceButtons = originalGlobalSettings.swapFaceButtons
-            StreamingPreferences.keepAwake = originalGlobalSettings.keepAwake
-            StreamingPreferences.enableHdr = originalGlobalSettings.enableHdr
-            StreamingPreferences.enableYUV444 = originalGlobalSettings.enableYUV444
-            StreamingPreferences.audioConfig = originalGlobalSettings.audioConfig
-            StreamingPreferences.videoCodecConfig = originalGlobalSettings.videoCodecConfig
-            StreamingPreferences.videoDecoderSelection = originalGlobalSettings.videoDecoderSelection
-            StreamingPreferences.windowMode = originalGlobalSettings.windowMode
-            StreamingPreferences.captureSysKeysMode = originalGlobalSettings.captureSysKeysMode
+            StreamingPreferences.restoreSettings(originalGlobalSettings)
         }
-        StreamingPreferences.reload()
     }
     
     function updateUIFromPreferences() {
@@ -432,10 +352,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: codecListModel
-                                ListElement { text: "Automatic"; val: 0 }
-                                ListElement { text: "H.264"; val: 1 }
-                                ListElement { text: "HEVC (H.265)"; val: 2 }
-                                ListElement { text: "AV1"; val: 4 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -450,9 +367,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: decoderListModel
-                                ListElement { text: "Automatic (Recommended)"; val: 0 }
-                                ListElement { text: "Force software decoding"; val: 2 }
-                                ListElement { text: "Force hardware decoding"; val: 1 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -469,9 +384,7 @@ NavigableDialog {
                             visible: SystemProperties.hasDesktopEnvironment
                             model: ListModel {
                                 id: windowModeListModel
-                                ListElement { text: "Fullscreen"; val: 0 }
-                                ListElement { text: "Borderless windowed"; val: 1 }
-                                ListElement { text: "Windowed"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -519,6 +432,24 @@ NavigableDialog {
                             to: unlockBitrateCheckbox.checked ? 500000 : 150000
                             stepSize: 500
                             value: 10000
+                            
+                            onMoved: {
+                                // Manual slider drag disables auto-adjust bitrate
+                                StreamingPreferences.autoAdjustBitrate = false
+                            }
+                        }
+                        
+                        Button {
+                            text: qsTr("Use Default Bitrate")
+                            font.pointSize: 10
+                            onClicked: {
+                                var selectedWidth = resolutionListModel.get(resolutionComboBox.currentIndex).width
+                                var selectedHeight = resolutionListModel.get(resolutionComboBox.currentIndex).height
+                                var selectedFps = fpsListModel.get(fpsComboBox.currentIndex).fps
+                                StreamingPreferences.autoAdjustBitrate = true
+                                bitrateSlider.value = StreamingPreferences.getDefaultBitrate(
+                                    selectedWidth, selectedHeight, selectedFps, enableYUV444Checkbox.checked)
+                            }
                         }
                     }
                 }
@@ -544,9 +475,7 @@ NavigableDialog {
                             textRole: "text"
                             model: ListModel {
                                 id: audioListModel
-                                ListElement { text: "Stereo"; val: 0 }
-                                ListElement { text: "5.1 surround sound"; val: 1 }
-                                ListElement { text: "7.1 surround sound"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                         
@@ -614,8 +543,7 @@ NavigableDialog {
                             visible: captureSysKeysCheckbox.checked && SystemProperties.hasDesktopEnvironment
                             model: ListModel {
                                 id: captureSysKeysModeListModel
-                                ListElement { text: "in fullscreen"; val: 1 }
-                                ListElement { text: "always"; val: 2 }
+                                // Populated dynamically in Component.onCompleted using enum constants
                             }
                         }
                     }
