@@ -153,8 +153,17 @@ if !ERRORLEVEL! NEQ 0 goto Error
 
 echo Compiling Moonlight in %BUILD_CONFIG% configuration
 pushd %BUILD_FOLDER%
-@REM %SOURCE_ROOT%\scripts\jom.exe %BUILD_CONFIG%
-nmake %BUILD_CONFIG%
+if defined USE_JOM (
+    if exist "%SOURCE_ROOT%\scripts\jom.exe" (
+        echo Using jom with %JOM_JOBS% parallel jobs
+        "%SOURCE_ROOT%\scripts\jom.exe" -j %JOM_JOBS% %BUILD_CONFIG%
+    ) else (
+        echo WARNING: jom.exe not found in scripts\ - falling back to nmake
+        nmake %BUILD_CONFIG%
+    )
+) else (
+    nmake %BUILD_CONFIG%
+)
 if !ERRORLEVEL! NEQ 0 goto Error
 popd
 
