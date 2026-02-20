@@ -432,4 +432,12 @@ void ComputerModel::loadCustomOrder()
     m_CustomOrder = prefs->getPcCustomOrder();
 }
 
+QString ComputerModel::getSectionAt(int index) const
+{
+    if (index >= 0 && index < m_Computers.count()) {
+        return m_CachedSections.value(m_Computers[index]->uuid, tr("Offline"));
+    }
+    return QString();
+}
+
 #include "computermodel.moc"

@@ -59,6 +59,19 @@ Item {
                 showGames = true
             }
         }
+
+        // Give focus to the active view for gamepad/keyboard navigation
+        if (viewMode === 0) {
+            appGrid.forceActiveFocus()
+            if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0 && appGrid.currentIndex < 0) {
+                appGrid.currentIndex = 0
+            }
+        } else {
+            appListView.forceActiveFocus()
+            if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0 && appListView.currentIndex < 0) {
+                appListView.currentIndex = 0
+            }
+        }
     }
 
     StackView.onDeactivating: {
@@ -123,6 +136,8 @@ Item {
                     currentIndex: appModel.getSortMode()
                     onActivated: {
                         appModel.setSortMode(index)
+                        if (viewMode === 0) appGrid.forceActiveFocus()
+                        else appListView.forceActiveFocus()
                     }
                     ToolTip.text: qsTr("Sort order")
                     ToolTip.visible: hovered
@@ -138,6 +153,9 @@ Item {
                         viewMode = viewMode === 0 ? 1 : 0
                         StreamingPreferences.appViewMode = viewMode
                         StreamingPreferences.save()
+                        // Transfer focus to the newly active view
+                        if (viewMode === 0) appGrid.forceActiveFocus()
+                        else appListView.forceActiveFocus()
                     }
                     ToolTip.text: viewMode === 0 ? qsTr("Switch to List View") : qsTr("Switch to Grid View")
                     ToolTip.visible: hovered
@@ -210,6 +228,59 @@ Item {
                                 currentFolder = ""
                                 appModel.setCurrentFolder("")
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== FOLDER TILES ====================
+        Flow {
+            Layout.fillWidth: true
+            Layout.leftMargin: 10
+            Layout.rightMargin: 10
+            Layout.topMargin: 5
+            visible: currentFolder === "" && appFolderTileRepeater.count > 0
+            spacing: 10
+
+            Repeater {
+                id: appFolderTileRepeater
+                model: StreamingPreferences.getAppFolders(appModel.getComputerUuid())
+
+                Rectangle {
+                    width: viewMode === 0 ? gridItemWidth : (appViewRoot.width - 40)
+                    height: viewMode === 0 ? Math.round(80 * tileScale) : Math.round(50 * tileScale)
+                    color: folderTileMA.containsMouse ? "#4A4A4A" : "#3A3A3A"
+                    radius: viewMode === 0 ? 8 : 4
+                    border.color: folderTileMA.containsMouse ? "#777" : "#555"
+                    border.width: 1
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: Math.round(10 * tileScale)
+
+                        Label {
+                            text: "📁"
+                            font.pointSize: viewMode === 0 ? Math.round(32 * tileScale) : Math.round(20 * tileScale)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Label {
+                            text: modelData
+                            font.pointSize: Math.round(14 * tileScale)
+                            font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Label.ElideRight
+                        }
+                    }
+
+                    MouseArea {
+                        id: folderTileMA
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            currentFolder = modelData
+                            appModel.setCurrentFolder(modelData)
                         }
                     }
                 }
@@ -481,6 +552,15 @@ Item {
                             enabled: model.index < appModel.count() - 1
                             onTriggered: appModel.moveApp(model.index, model.index + 1)
                         }
+                        NavigableMenuItem {
+                            text: qsTr("Move to Position...")
+                            visible: appModel.getSortMode() === 1
+                            onTriggered: {
+                                moveAppToPositionDialog.currentIndex = model.index
+                                moveAppToPositionDialog.maxCount = appModel.count()
+                                moveAppToPositionDialog.open()
+                            }
+                        }
 
                         MenuSeparator { visible: folderSubMenu.visible }
 
@@ -552,6 +632,32 @@ Item {
                 opacity: model.hidden ? 0.4 : 1.0
                 highlighted: appListView.activeFocus && appListView.currentIndex === index
 
+                function activate() {
+                    if (!model.running) {
+                        listLaunchOrResumeApp(index, model.name, model.appid, true)
+                    }
+                }
+                function openContextMenu() {
+                    listContextMenu.appIndex = index
+                    listContextMenu.appName = model.name
+                    listContextMenu.appRunning = model.running
+                    listContextMenu.appHidden = model.hidden
+                    listContextMenu.appDirectLaunch = model.directLaunch
+                    listContextMenu.appId = model.appid
+                    if (listContextMenu.popup) {
+                        listContextMenu.popup()
+                    } else {
+                        listContextMenu.open()
+                    }
+                }
+
+                // Gamepad/keyboard navigation
+                Keys.onUpPressed: appListView.decrementCurrentIndex()
+                Keys.onDownPressed: appListView.incrementCurrentIndex()
+                Keys.onReturnPressed: activate()
+                Keys.onEnterPressed: activate()
+                Keys.onMenuPressed: openContextMenu()
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 15
@@ -590,25 +696,9 @@ Item {
                     }
                 }
 
-                onClicked: {
-                    if (!model.running) {
-                        listLaunchOrResumeApp(index, model.name, model.appid, true)
-                    }
-                }
+                onClicked: activate()
 
-                onPressAndHold: {
-                    listContextMenu.appIndex = index
-                    listContextMenu.appName = model.name
-                    listContextMenu.appRunning = model.running
-                    listContextMenu.appHidden = model.hidden
-                    listContextMenu.appDirectLaunch = model.directLaunch
-                    listContextMenu.appId = model.appid
-                    if (listContextMenu.popup) {
-                        listContextMenu.popup()
-                    } else {
-                        listContextMenu.open()
-                    }
-                }
+                onPressAndHold: openContextMenu()
 
                 MouseArea {
                     anchors.fill: parent
@@ -619,11 +709,13 @@ Item {
                 }
             }
 
+            // Initial focus key handler (when currentIndex is -1)
+            Keys.onDownPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
+            }
+
             ScrollBar.vertical: ScrollBar {}
         }
-
-        // ==================== FOLDER ITEMS AT TOP (when in root, grid mode) ====================
-        // Folders are displayed as a separate Flow before the grid when in root
     }
 
     function listLaunchOrResumeApp(appIndex, appName, appId, quitExistingApp) {
@@ -709,6 +801,15 @@ Item {
             visible: appModel.getSortMode() === 1
             enabled: listContextMenu.appIndex < appModel.count() - 1
             onTriggered: appModel.moveApp(listContextMenu.appIndex, listContextMenu.appIndex + 1)
+        }
+        NavigableMenuItem {
+            text: qsTr("Move to Position...")
+            visible: appModel.getSortMode() === 1
+            onTriggered: {
+                moveAppToPositionDialog.currentIndex = listContextMenu.appIndex
+                moveAppToPositionDialog.maxCount = appModel.count()
+                moveAppToPositionDialog.open()
+            }
         }
 
         MenuSeparator {}
@@ -833,5 +934,42 @@ Item {
         }
 
         onAccepted: quitApp()
+    }
+
+    NavigableDialog {
+        id: moveAppToPositionDialog
+        property int currentIndex: 0
+        property int maxCount: 1
+
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onOpened: {
+            appPositionSpinBox.forceActiveFocus()
+            appPositionSpinBox.value = currentIndex + 1
+        }
+
+        onAccepted: {
+            var targetIndex = appPositionSpinBox.value - 1
+            if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
+                appModel.moveApp(currentIndex, targetIndex)
+            }
+        }
+
+        ColumnLayout {
+            Label {
+                text: qsTr("Move to position (1-%1):").arg(moveAppToPositionDialog.maxCount)
+                font.bold: true
+            }
+
+            SpinBox {
+                id: appPositionSpinBox
+                from: 1
+                to: moveAppToPositionDialog.maxCount
+                Layout.fillWidth: true
+
+                Keys.onReturnPressed: moveAppToPositionDialog.accept()
+                Keys.onEnterPressed: moveAppToPositionDialog.accept()
+            }
+        }
     }
 }

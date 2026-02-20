@@ -21,6 +21,7 @@ Item {
     property int tileIconSize: Math.round(200 * tileScale)
 
     property bool showSections: StreamingPreferences.pcShowSections
+    property var collapsedSections: ({})
 
     id: pcViewRoot
     objectName: qsTr("Computers")
@@ -32,10 +33,15 @@ Item {
     StackView.onActivated: {
         ComputerManager.computerAddCompleted.connect(addComplete)
 
-        if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
-            if (showSections) {
+        // Give focus to the active view for gamepad/keyboard navigation
+        if (showSections) {
+            pcListView.forceActiveFocus()
+            if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
                 pcListView.currentIndex = 0
-            } else {
+            }
+        } else {
+            pcGrid.forceActiveFocus()
+            if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
                 pcGrid.currentIndex = 0
             }
         }
@@ -138,6 +144,8 @@ Item {
                     currentIndex: computerModel.getSortMode()
                     onActivated: {
                         computerModel.setSortMode(index)
+                        if (showSections) pcListView.forceActiveFocus()
+                        else pcGrid.forceActiveFocus()
                     }
                     ToolTip.text: qsTr("Sort order")
                     ToolTip.visible: hovered
@@ -153,8 +161,10 @@ Item {
                         StreamingPreferences.pcShowSections = !StreamingPreferences.pcShowSections
                         StreamingPreferences.save()
                         showSections = StreamingPreferences.pcShowSections
-                        // Force re-sort with new section grouping
                         computerModel.refreshSort()
+                        // Transfer focus to the newly active view
+                        if (showSections) pcListView.forceActiveFocus()
+                        else pcGrid.forceActiveFocus()
                     }
                     ToolTip.text: showSections ? qsTr("Hide Sections") : qsTr("Show Sections (Online / Not Paired / Offline)")
                     ToolTip.visible: hovered
@@ -211,9 +221,32 @@ Item {
                 height: 40
                 color: "transparent"
 
+                property bool isCollapsed: !!collapsedSections[section]
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        var cs = Object.assign({}, collapsedSections)
+                        if (cs[section]) {
+                            delete cs[section]
+                        } else {
+                            cs[section] = true
+                        }
+                        collapsedSections = cs
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 15
+
+                    Label {
+                        text: isCollapsed ? "▸" : "▾"
+                        font.pointSize: 14
+                        color: section === qsTr("Online") ? "#4CAF50" :
+                               section === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
+                    }
 
                     Rectangle {
                         width: 12
@@ -243,8 +276,52 @@ Item {
 
             delegate: ItemDelegate {
                 width: pcListView.width
-                height: Math.round(80 * tileScale)
+                height: collapsedSections[model.section] ? 0 : Math.round(80 * tileScale)
+                visible: !collapsedSections[model.section]
                 highlighted: pcListView.activeFocus && pcListView.currentIndex === index
+
+                function activate() {
+                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
+                }
+                function openContextMenu() {
+                    pcSectionContextMenu.pcIndex = index
+                    pcSectionContextMenu.pcName = model.name
+                    pcSectionContextMenu.pcOnline = model.online
+                    pcSectionContextMenu.pcPaired = model.paired
+                    pcSectionContextMenu.pcWakeable = !model.online && model.wakeable
+                    pcSectionContextMenu.pcUuid = model.uuid
+                    pcSectionContextMenu.pcDetails = model.details
+                    if (pcSectionContextMenu.popup) {
+                        pcSectionContextMenu.popup()
+                    } else {
+                        pcSectionContextMenu.open()
+                    }
+                }
+                function deleteAction() {
+                    deletePcDialog.pcIndex = index
+                    deletePcDialog.pcName = model.name
+                    deletePcDialog.open()
+                }
+
+                // Gamepad/keyboard navigation with collapsed section skip
+                Keys.onDownPressed: {
+                    var next = index + 1
+                    while (next < pcListView.count && !!collapsedSections[computerModel.getSectionAt(next)]) {
+                        next++
+                    }
+                    if (next < pcListView.count) pcListView.currentIndex = next
+                }
+                Keys.onUpPressed: {
+                    var prev = index - 1
+                    while (prev >= 0 && !!collapsedSections[computerModel.getSectionAt(prev)]) {
+                        prev--
+                    }
+                    if (prev >= 0) pcListView.currentIndex = prev
+                }
+                Keys.onReturnPressed: activate()
+                Keys.onEnterPressed: activate()
+                Keys.onMenuPressed: openContextMenu()
+                Keys.onDeletePressed: deleteAction()
 
                 RowLayout {
                     anchors.fill: parent
@@ -308,30 +385,20 @@ Item {
                     }
                 }
 
-                onClicked: {
-                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
-                }
+                onClicked: activate()
 
-                onPressAndHold: {
-                    pcSectionContextMenu.pcIndex = index
-                    pcSectionContextMenu.pcName = model.name
-                    pcSectionContextMenu.pcOnline = model.online
-                    pcSectionContextMenu.pcPaired = model.paired
-                    pcSectionContextMenu.pcWakeable = !model.online && model.wakeable
-                    pcSectionContextMenu.pcUuid = model.uuid
-                    pcSectionContextMenu.pcDetails = model.details
-                    if (pcSectionContextMenu.popup) {
-                        pcSectionContextMenu.popup()
-                    } else {
-                        pcSectionContextMenu.open()
-                    }
-                }
+                onPressAndHold: openContextMenu()
 
                 MouseArea {
                     anchors.fill: parent
                     acceptedButtons: Qt.RightButton
                     onClicked: parent.pressAndHold()
                 }
+            }
+
+            // Initial focus key handler (when currentIndex is -1)
+            Keys.onDownPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
             }
 
             ScrollBar.vertical: ScrollBar {}
@@ -490,6 +557,15 @@ Item {
                             enabled: index < computerModel.count() - 1
                             onTriggered: computerModel.moveComputer(index, index + 1)
                         }
+                        NavigableMenuItem {
+                            text: qsTr("Move to Position...")
+                            visible: computerModel.getSortMode() === 1
+                            onTriggered: {
+                                movePcToPositionDialog.currentIndex = index
+                                movePcToPositionDialog.maxCount = computerModel.count()
+                                movePcToPositionDialog.open()
+                            }
+                        }
                     }
                 }
 
@@ -635,6 +711,15 @@ Item {
             enabled: pcSectionContextMenu.pcIndex < computerModel.count() - 1
             onTriggered: computerModel.moveComputer(pcSectionContextMenu.pcIndex, pcSectionContextMenu.pcIndex + 1)
         }
+        NavigableMenuItem {
+            text: qsTr("Move to Position...")
+            visible: computerModel.getSortMode() === 1
+            onTriggered: {
+                movePcToPositionDialog.currentIndex = pcSectionContextMenu.pcIndex
+                movePcToPositionDialog.maxCount = computerModel.count()
+                movePcToPositionDialog.open()
+            }
+        }
     }
 
     ErrorMessageDialog {
@@ -752,5 +837,42 @@ Item {
         text: showPcDetailsDialog.pcDetails
         imageSrc: "qrc:/res/baseline-help_outline-24px.svg"
         standardButtons: Dialog.Ok
+    }
+
+    NavigableDialog {
+        id: movePcToPositionDialog
+        property int currentIndex: 0
+        property int maxCount: 1
+
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onOpened: {
+            pcPositionSpinBox.forceActiveFocus()
+            pcPositionSpinBox.value = currentIndex + 1
+        }
+
+        onAccepted: {
+            var targetIndex = pcPositionSpinBox.value - 1
+            if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
+                computerModel.moveComputer(currentIndex, targetIndex)
+            }
+        }
+
+        ColumnLayout {
+            Label {
+                text: qsTr("Move to position (1-%1):").arg(movePcToPositionDialog.maxCount)
+                font.bold: true
+            }
+
+            SpinBox {
+                id: pcPositionSpinBox
+                from: 1
+                to: movePcToPositionDialog.maxCount
+                Layout.fillWidth: true
+
+                Keys.onReturnPressed: movePcToPositionDialog.accept()
+                Keys.onEnterPressed: movePcToPositionDialog.accept()
+            }
+        }
     }
 }
