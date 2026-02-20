@@ -142,6 +142,14 @@ Item {
                     ToolTip.text: qsTr("Sort order")
                     ToolTip.visible: hovered
                     ToolTip.delay: 1000
+
+                    // Refresh when model resets (e.g. after moveApp auto-switches to custom)
+                    Connections {
+                        target: appModel
+                        function onModelReset() {
+                            sortModeCombo.currentIndex = appModel.getSortMode()
+                        }
+                    }
                 }
 
                 // View mode toggle (grid / list)
@@ -713,6 +721,12 @@ Item {
             Keys.onDownPressed: {
                 if (currentIndex < 0 && count > 0) currentIndex = 0
             }
+            Keys.onUpPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
+            }
+            Keys.onReturnPressed: {
+                if (currentIndex < 0 && count > 0) currentIndex = 0
+            }
 
             ScrollBar.vertical: ScrollBar {}
         }
@@ -883,8 +897,10 @@ Item {
         onAccepted: {
             if (folderNameText.text) {
                 StreamingPreferences.createAppFolder(appModel.getComputerUuid(), folderNameText.text)
-                // Refresh the folder repeater
-                folderRepeater.model = StreamingPreferences.getAppFolders(appModel.getComputerUuid())
+                // Refresh both the menu repeater and the visible folder tiles
+                var folders = StreamingPreferences.getAppFolders(appModel.getComputerUuid())
+                folderRepeater.model = folders
+                appFolderTileRepeater.model = folders
             }
         }
 
@@ -944,14 +960,18 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
 
         onOpened: {
-            appPositionSpinBox.forceActiveFocus()
-            appPositionSpinBox.value = currentIndex + 1
+            appPositionField.text = String(currentIndex + 1)
+            appPositionField.forceActiveFocus()
+            appPositionField.selectAll()
         }
 
         onAccepted: {
-            var targetIndex = appPositionSpinBox.value - 1
-            if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
-                appModel.moveApp(currentIndex, targetIndex)
+            var val = parseInt(appPositionField.text)
+            if (!isNaN(val)) {
+                var targetIndex = val - 1
+                if (targetIndex !== currentIndex && targetIndex >= 0 && targetIndex < maxCount) {
+                    appModel.moveApp(currentIndex, targetIndex)
+                }
             }
         }
 
@@ -961,11 +981,12 @@ Item {
                 font.bold: true
             }
 
-            SpinBox {
-                id: appPositionSpinBox
-                from: 1
-                to: moveAppToPositionDialog.maxCount
+            TextField {
+                id: appPositionField
                 Layout.fillWidth: true
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: moveAppToPositionDialog.maxCount }
+                placeholderText: "1-" + moveAppToPositionDialog.maxCount
 
                 Keys.onReturnPressed: moveAppToPositionDialog.accept()
                 Keys.onEnterPressed: moveAppToPositionDialog.accept()

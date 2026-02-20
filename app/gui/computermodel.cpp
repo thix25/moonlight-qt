@@ -305,7 +305,6 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 void ComputerModel::sortComputers()
 {
     StreamingPreferences* prefs = StreamingPreferences::get();
-    bool showSections = prefs->pcShowSections;
 
     // Snapshot section assignments BEFORE sorting to prevent race conditions.
     // Computer state can change on background threads between comparator calls,
@@ -327,14 +326,12 @@ void ComputerModel::sortComputers()
     }
 
     if (m_SortMode == 1 && !m_CustomOrder.isEmpty()) {
-        // Custom sort order
+        // Custom sort order - always group by section first
         std::sort(m_Computers.begin(), m_Computers.end(),
-                  [this, showSections, &sectionOrder](NvComputer* a, NvComputer* b) {
-            if (showSections) {
-                int secA = sectionOrder.value(a->uuid, 2);
-                int secB = sectionOrder.value(b->uuid, 2);
-                if (secA != secB) return secA < secB;
-            }
+                  [this, &sectionOrder](NvComputer* a, NvComputer* b) {
+            int secA = sectionOrder.value(a->uuid, 2);
+            int secB = sectionOrder.value(b->uuid, 2);
+            if (secA != secB) return secA < secB;
 
             int idxA = m_CustomOrder.indexOf(a->uuid);
             int idxB = m_CustomOrder.indexOf(b->uuid);
@@ -348,14 +345,12 @@ void ComputerModel::sortComputers()
             return idxA < idxB;
         });
     } else {
-        // Alphabetical sort with optional section grouping
+        // Alphabetical sort - always group by section first
         std::sort(m_Computers.begin(), m_Computers.end(),
-                  [showSections, &sectionOrder](NvComputer* a, NvComputer* b) {
-            if (showSections) {
-                int secA = sectionOrder.value(a->uuid, 2);
-                int secB = sectionOrder.value(b->uuid, 2);
-                if (secA != secB) return secA < secB;
-            }
+                  [&sectionOrder](NvComputer* a, NvComputer* b) {
+            int secA = sectionOrder.value(a->uuid, 2);
+            int secB = sectionOrder.value(b->uuid, 2);
+            if (secA != secB) return secA < secB;
 
             QReadLocker lockA(&a->lock);
             QReadLocker lockB(&b->lock);
