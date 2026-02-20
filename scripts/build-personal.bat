@@ -21,6 +21,13 @@ rem    --fast [N]   Use jom for parallel compilation.
 rem                  N = number of jobs (default: 32 for Ryzen 9 7950X).
 rem                  Requires jom.exe in scripts\ folder.
 rem                  Also enables MSVC /MP multi-process compilation.
+rem    --upload     Copy the portable ZIP to the NAS AUTOCOPY folder.
+rem    --keepcfg    Same as --upload, but first injects Moonlight.ini
+rem                  from the NAS config folder into the ZIP.
+rem
+rem  NAS uploads require NAS_SHARE, NAS_AUTOCOPY, NAS_USER and NAS_PASS
+rem  in the environment. --keepcfg also requires NAS_CFG_DIR.
+rem  Do not commit credentials or personal NAS paths.
 rem
 rem  Examples:
 rem    scripts\build-personal.bat                  (nmake, current version)
@@ -28,6 +35,8 @@ rem    scripts\build-personal.bat 6.3.0            (nmake, version 6.3.0)
 rem    scripts\build-personal.bat --fast            (jom -j32, current ver)
 rem    scripts\build-personal.bat --fast 16         (jom -j16, current ver)
 rem    scripts\build-personal.bat --fast 16 6.3.0   (jom -j16, ver 6.3.0)
+rem    scripts\build-personal.bat --upload          (build + upload to NAS)
+rem    scripts\build-personal.bat --fast --keepcfg  (fast build + cfg + NAS)
 rem ============================================================
 
 rem ------------------------------------------------------------
@@ -37,6 +46,8 @@ set "USE_JOM="
 set "JOM_JOBS=32"
 set "VERSION="
 set "MP_FLAG="
+set "DO_UPLOAD="
+set "DO_KEEPCFG="
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -45,6 +56,16 @@ if /I "%~1"=="--fast" (
     set "MP_FLAG=/MP"
     shift
     goto parse_check_jobs
+)
+if /I "%~1"=="--upload" (
+    set "DO_UPLOAD=1"
+    shift
+    goto parse_args
+)
+if /I "%~1"=="--keepcfg" (
+    set "DO_KEEPCFG=1"
+    shift
+    goto parse_args
 )
 rem Anything else is the version
 if "!VERSION!"=="" set "VERSION=%~1"
@@ -63,6 +84,21 @@ goto parse_args
 
 :args_done
 
+if defined DO_UPLOAD goto validate_nas_config
+if not defined DO_KEEPCFG goto nas_config_valid
+:validate_nas_config
+for %%V in (NAS_SHARE NAS_AUTOCOPY NAS_USER NAS_PASS) do (
+    if not defined %%V (
+        echo ERROR: Set %%V in the environment before using --upload or --keepcfg.
+        exit /b 1
+    )
+)
+if defined DO_KEEPCFG if not defined NAS_CFG_DIR (
+    echo ERROR: Set NAS_CFG_DIR in the environment before using --keepcfg.
+    exit /b 1
+)
+:nas_config_valid
+
 if defined USE_JOM (
     echo.
     echo  *** FAST BUILD MODE: jom -j%JOM_JOBS% + /MP ***
@@ -72,12 +108,23 @@ if defined USE_JOM (
     echo  Standard build mode ^(nmake^). Use --fast for parallel builds.
     echo.
 )
+if defined DO_KEEPCFG (
+    echo  *** UPLOAD MODE: inject Moonlight.ini + copy to NAS ***
+    echo.
+) else if defined DO_UPLOAD (
+    echo  *** UPLOAD MODE: copy ZIP to NAS ***
+    echo.
+)
 
 rem ------------------------------------------------------------
 rem  Step 0: Configure paths to VS and Qt environments
 rem ------------------------------------------------------------
 set "VS_DEV_CMD=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat"
 set "QT_ENV_BAT=C:\ProgramData\Qt\6.10.2\msvc2022_64\bin\qtenv2.bat"
+rem NAS_AUTOCOPY is configured through the environment.
+rem NAS_CFG_DIR is configured through the environment.
+rem NAS_USER is configured through the environment.
+rem NAS_PASS is configured through the environment.
 
 echo.
 echo ============================================================
@@ -235,6 +282,79 @@ if !ERRORLEVEL! NEQ 0 (
     exit /b 1
 )
 echo OK - build-arch.bat completed
+
+echo.
+echo ============================================================
+echo  Step 8: Upload to NAS
+echo ============================================================
+if not defined DO_UPLOAD if not defined DO_KEEPCFG (
+    echo Skipping - neither --upload nor --keepcfg specified.
+    goto skip_upload
+)
+
+set "INSTALLER_DIR=%SOURCE_ROOT%\build\installer-x64-release"
+rem NAS_SHARE is configured through the environment.
+
+rem Find the portable ZIP
+set "ZIP_FILE="
+for %%f in ("%INSTALLER_DIR%\MoonlightPortable-x64-*.zip") do set "ZIP_FILE=%%f"
+if not defined ZIP_FILE (
+    echo ERROR: No MoonlightPortable ZIP found in %INSTALLER_DIR%
+    exit /b 1
+)
+echo Found: !ZIP_FILE!
+
+rem Authenticate and mount the NAS share
+echo Connecting to NAS...
+net use "!NAS_SHARE!" /delete >nul 2>&1
+net use "!NAS_SHARE!" /user:"!NAS_USER!" "!NAS_PASS!" /persistent:no
+if !ERRORLEVEL! NEQ 0 (
+    echo ERROR: Failed to connect to NAS - check NAS_USER / NAS_PASS in the environment
+    exit /b 1
+)
+echo OK - NAS share mounted
+
+if defined DO_KEEPCFG (
+    echo.
+    echo Injecting Moonlight.ini into ZIP...
+    set "PS_SCRIPT=%TEMP%\moonlight_inject.ps1"
+    > "!PS_SCRIPT!" (
+        echo Add-Type -AssemblyName System.IO.Compression.FileSystem
+        echo $iniPath = '!NAS_CFG_DIR!\Moonlight.ini'
+        echo if (-not (Test-Path -LiteralPath $iniPath^)^) {
+        echo Write-Error ('Moonlight.ini not found at: ' + $iniPath^)
+        echo exit 1
+        echo }
+        echo $zipPath = '!ZIP_FILE!'
+        echo $zip = [IO.Compression.ZipFile]::Open($zipPath, 'Update'^)
+        echo [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $iniPath, 'Moonlight Game Streaming Project/Moonlight.ini'^) ^| Out-Null
+        echo $zip.Dispose(^)
+        echo Write-Host 'OK - Moonlight.ini injected into ZIP'
+    )
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_SCRIPT!"
+    set "PS_EXIT=!ERRORLEVEL!"
+    del "!PS_SCRIPT!" 2>nul
+    if !PS_EXIT! NEQ 0 (
+        net use "!NAS_SHARE!" /delete >nul 2>&1
+        echo ERROR: Failed to inject Moonlight.ini into ZIP
+        exit /b 1
+    )
+)
+
+echo.
+echo Copying ZIP to NAS...
+copy /Y "!ZIP_FILE!" "!NAS_AUTOCOPY!\"
+if !ERRORLEVEL! NEQ 0 (
+    net use "!NAS_SHARE!" /delete >nul 2>&1
+    echo ERROR: Failed to copy ZIP to NAS
+    exit /b 1
+)
+echo OK - ZIP uploaded to: !NAS_AUTOCOPY!
+
+net use "!NAS_SHARE!" /delete >nul 2>&1
+echo OK - NAS disconnected
+
+:skip_upload
 
 echo.
 echo ============================================================
