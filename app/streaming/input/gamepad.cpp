@@ -3,6 +3,7 @@
 #include <Limelight.h>
 #include "SDL_compat.h"
 #include "settings/mappingmanager.h"
+#include "settings/gamepadmapping.h"
 
 #include <QtMath>
 
@@ -518,22 +519,11 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
         // controller will join as player 2, even though no player 1 controller
         // is connected at all. This pretty much screws any attempt to use
         // the gamepad in single player games, so just assign them in order from 0.
-        i = 0;
-
-        for (; i < MAX_GAMEPADS; i++) {
-            SDL_assert(m_GamepadState[i].controller != controller);
-            if (m_GamepadState[i].controller == NULL) {
-                // Found an empty slot
-                break;
-            }
-        }
-
-        if (i == MAX_GAMEPADS) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "No open gamepad slots found!");
-            SDL_GameControllerClose(controller);
-            return;
-        }
+        //
+        // Enhancement: We now check the GamepadMapping settings to see if the user
+        // has pinned this GUID to a specific player index. If so, we try to honor
+        // that. We also check if this GUID was previously in a slot (preserved across
+        // disconnect) and try to return it to the same slot.
 
         SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_GameControllerGetJoystick(controller)),
                                   guidStr, sizeof(guidStr));
@@ -546,7 +536,66 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
             return;
         }
 
+        // First, check if the user has a mapping configured for this GUID
+        int mappedIndex = GamepadMapping::get()->resolveMapping(m_ClientUuid, QString(guidStr));
+
+        i = -1;
+
+        if (m_MultiController && mappedIndex != GAMEPAD_MAPPING_AUTO) {
+            // User has explicitly mapped this controller to a player slot
+            if (mappedIndex >= 0 && mappedIndex < MAX_GAMEPADS) {
+                if (m_GamepadState[mappedIndex].controller == NULL) {
+                    // The desired slot is free, use it
+                    i = mappedIndex;
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Assigning gamepad with GUID %s to user-configured player %d",
+                                guidStr, mappedIndex + 1);
+                } else {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "User-configured player slot %d for GUID %s is occupied, finding next available",
+                                mappedIndex + 1, guidStr);
+                }
+            }
+        }
+
+        if (i == -1 && m_MultiController) {
+            // Check if this GUID was previously in a slot (reconnect scenario)
+            for (int j = 0; j < MAX_GAMEPADS; j++) {
+                if (m_GamepadState[j].controller == NULL &&
+                    m_GamepadState[j].guid[0] != '\0' &&
+                    SDL_strcasecmp(m_GamepadState[j].guid, guidStr) == 0) {
+                    i = j;
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Reconnecting gamepad with GUID %s to previous player slot %d",
+                                guidStr, i + 1);
+                    break;
+                }
+            }
+        }
+
+        if (i == -1) {
+            // Fall back to first available slot
+            for (i = 0; i < MAX_GAMEPADS; i++) {
+                SDL_assert(m_GamepadState[i].controller != controller);
+                if (m_GamepadState[i].controller == NULL) {
+                    // Found an empty slot
+                    break;
+                }
+            }
+        }
+
+        if (i == MAX_GAMEPADS || i < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "No open gamepad slots found!");
+            SDL_GameControllerClose(controller);
+            return;
+        }
+
         state = &m_GamepadState[i];
+
+        // Store the GUID for reconnect tracking
+        SDL_strlcpy(state->guid, guidStr, sizeof(state->guid));
+
         if (m_MultiController) {
             state->index = i;
 
@@ -753,8 +802,15 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
             LiSendMultiControllerEvent(state->index, m_GamepadMask,
                                        0, 0, 0, 0, 0, 0, 0);
 
+            // Preserve the GUID so this controller can reclaim the same slot on reconnect
+            char savedGuid[33];
+            SDL_strlcpy(savedGuid, state->guid, sizeof(savedGuid));
+
             // Clear all remaining state from this slot
             SDL_memset(state, 0, sizeof(*state));
+
+            // Restore the GUID for reconnect tracking
+            SDL_strlcpy(state->guid, savedGuid, sizeof(state->guid));
         }
     }
 }
