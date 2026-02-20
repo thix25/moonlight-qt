@@ -54,6 +54,9 @@ public:
     // Custom ordering
     Q_INVOKABLE void moveComputer(int fromIndex, int toIndex);
 
+    // Force re-sort (e.g. when section toggle changes)
+    Q_INVOKABLE void refreshSort();
+
     // Convenience for QML
     Q_INVOKABLE int count() const { return m_Computers.count(); }
 
@@ -75,4 +78,5 @@ private:
     ComputerManager* m_ComputerManager;
     int m_SortMode; // 0=alphabetical, 1=custom
     QStringList m_CustomOrder; // PC UUIDs in custom order
+    QHash<QString, QString> m_CachedSections; // uuid -> section string (snapshot from sort)
 };

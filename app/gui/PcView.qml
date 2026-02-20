@@ -13,7 +13,7 @@ Item {
     property ComputerModel computerModel : createModel()
 
     // Dynamic tile sizing based on preference scale (50-200%)
-    property real tileScale: StreamingPreferences.pcTileScale / 100.0
+    property real tileScale: pcTileSizeSlider.value / 100.0
     property int tileCellWidth: Math.round(310 * tileScale)
     property int tileCellHeight: Math.round(330 * tileScale)
     property int tileItemWidth: Math.round(300 * tileScale)
@@ -82,7 +82,7 @@ Item {
     }
 
     // PC action functions (shared between grid and list delegates)
-    function pcClicked(modelIndex, modelOnline, modelPaired, modelServerSupported, modelName) {
+    function pcClicked(modelIndex, modelOnline, modelPaired, modelServerSupported, modelName, modelUuid) {
         if (modelOnline) {
             if (!modelServerSupported) {
                 errorDialog.text = qsTr("The version of GeForce Experience on %1 is not supported by this build of Moonlight. You must update Moonlight to stream from %1.").arg(modelName)
@@ -91,7 +91,7 @@ Item {
             }
             else if (modelPaired) {
                 var component = Qt.createComponent("AppView.qml")
-                var appView = component.createObject(stackView, {"computerIndex": modelIndex, "objectName": modelName})
+                var appView = component.createObject(stackView, {"computerUuid": modelUuid, "objectName": modelName})
                 stackView.push(appView)
             }
             else {
@@ -154,7 +154,7 @@ Item {
                         StreamingPreferences.save()
                         showSections = StreamingPreferences.pcShowSections
                         // Force re-sort with new section grouping
-                        computerModel.setSortMode(computerModel.getSortMode())
+                        computerModel.refreshSort()
                     }
                     ToolTip.text: showSections ? qsTr("Hide Sections") : qsTr("Show Sections (Online / Not Paired / Offline)")
                     ToolTip.visible: hovered
@@ -197,6 +197,10 @@ Item {
             topMargin: 10
             bottomMargin: 5
             clip: true
+
+            Component.onCompleted: {
+                currentIndex = -1
+            }
 
             model: computerModel
 
@@ -305,7 +309,7 @@ Item {
                 }
 
                 onClicked: {
-                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name)
+                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
                 }
 
                 onPressAndHold: {
@@ -421,7 +425,7 @@ Item {
                             text: qsTr("View All Apps")
                             onTriggered: {
                                 var component = Qt.createComponent("AppView.qml")
-                                var appView = component.createObject(stackView, {"computerIndex": index, "objectName": model.name, "showHiddenGames": true})
+                                var appView = component.createObject(stackView, {"computerUuid": model.uuid, "objectName": model.name, "showHiddenGames": true})
                                 stackView.push(appView)
                             }
                             visible: model.online && model.paired
@@ -490,7 +494,7 @@ Item {
                 }
 
                 onClicked: {
-                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name)
+                    pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
                 }
 
                 onPressAndHold: {
@@ -568,7 +572,7 @@ Item {
             text: qsTr("View All Apps")
             onTriggered: {
                 var component = Qt.createComponent("AppView.qml")
-                var appView = component.createObject(stackView, {"computerIndex": pcSectionContextMenu.pcIndex, "objectName": pcSectionContextMenu.pcName, "showHiddenGames": true})
+                var appView = component.createObject(stackView, {"computerUuid": pcSectionContextMenu.pcUuid, "objectName": pcSectionContextMenu.pcName, "showHiddenGames": true})
                 stackView.push(appView)
             }
             visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired

@@ -26,7 +26,7 @@ public:
     explicit AppModel(QObject *parent = nullptr);
 
     // Must be called before any QAbstractListModel functions
-    Q_INVOKABLE void initialize(ComputerManager* computerManager, int computerIndex, bool showHiddenGames);
+    Q_INVOKABLE void initialize(ComputerManager* computerManager, const QString& computerUuid, bool showHiddenGames);
 
     Q_INVOKABLE Session* createSessionForApp(int appIndex);
 
