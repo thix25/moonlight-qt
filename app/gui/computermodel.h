@@ -19,6 +19,8 @@ class ComputerModel : public QAbstractListModel
         DetailsRole,
         UuidRole,
         SectionRole,
+        HasClientSettingsRole,
+        SettingsSummaryRole,
     };
 
 public:

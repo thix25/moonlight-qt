@@ -100,6 +100,63 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         // between sorting and data display
         return m_CachedSections.value(computer->uuid, tr("Offline"));
     }
+    case HasClientSettingsRole: {
+        if (computer->uuid.isEmpty()) return false;
+        return StreamingPreferences::get()->hasClientSettings(computer->uuid);
+    }
+    case SettingsSummaryRole: {
+        // Guard against empty UUID (freshly discovered PCs)
+        if (computer->uuid.isEmpty()) return QString();
+        
+        // Build a compact settings summary for this PC by reading directly
+        // from QSettings to avoid mutating the global singleton (which would
+        // cause signal storms, race conditions, and potential deadlocks).
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        bool hasCustom = prefs->hasClientSettings(computer->uuid);
+
+        int w, h, fpsVal, bitrateVal;
+        int codecVal;
+        bool vsyncVal;
+
+        if (!hasCustom) {
+            // Use current global values directly
+            w = prefs->width;
+            h = prefs->height;
+            fpsVal = prefs->fps;
+            bitrateVal = prefs->bitrateKbps;
+            codecVal = static_cast<int>(prefs->videoCodecConfig);
+            vsyncVal = prefs->enableVsync;
+        } else {
+            // Read client-specific settings directly from QSettings
+            // without touching the singleton's state
+            QSettings settings;
+            settings.beginGroup("clients/" + computer->uuid);
+            w = settings.value("width", prefs->width).toInt();
+            h = settings.value("height", prefs->height).toInt();
+            fpsVal = settings.value("fps", prefs->fps).toInt();
+            bitrateVal = settings.value("bitrate", prefs->bitrateKbps).toInt();
+            codecVal = settings.value("videocfg", static_cast<int>(prefs->videoCodecConfig)).toInt();
+            vsyncVal = settings.value("vsync", prefs->enableVsync).toBool();
+            settings.endGroup();
+        }
+
+        QString codecStr;
+        switch (codecVal) {
+        case StreamingPreferences::VCC_AUTO: codecStr = tr("Auto"); break;
+        case StreamingPreferences::VCC_FORCE_H264: codecStr = "H.264"; break;
+        case StreamingPreferences::VCC_FORCE_HEVC: codecStr = "HEVC"; break;
+        case StreamingPreferences::VCC_FORCE_AV1: codecStr = "AV1"; break;
+        default: codecStr = tr("Auto"); break;
+        }
+
+        return QString("%1x%2 | %3 FPS | %4 Mbps | %5 | VSync: %6 | %7")
+            .arg(w).arg(h)
+            .arg(fpsVal)
+            .arg(QString::number(bitrateVal / 1000.0, 'f', 1))
+            .arg(codecStr)
+            .arg(vsyncVal ? tr("On") : tr("Off"))
+            .arg(hasCustom ? tr("Custom") : tr("Global"));
+    }
     default:
         return QVariant();
     }
@@ -130,6 +187,8 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[DetailsRole] = "details";
     names[UuidRole] = "uuid";
     names[SectionRole] = "section";
+    names[HasClientSettingsRole] = "hasClientSettings";
+    names[SettingsSummaryRole] = "settingsSummary";
 
     return names;
 }
