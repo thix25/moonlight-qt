@@ -57,6 +57,7 @@
 #define SER_PCSORTMODE "pcsortmode"
 #define SER_PCTILESCALE "pctilescale"
 #define SER_PCSHOWSECTIONS "pcshowsections"
+#define SER_SHOWPCINFO "showpcinfo"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -183,6 +184,7 @@ void StreamingPreferences::reload()
                                                         static_cast<int>(PcSortMode::PSM_ALPHABETICAL)).toInt());
     pcTileScale = settings.value(SER_PCTILESCALE, 100).toInt();
     pcShowSections = settings.value(SER_PCSHOWSECTIONS, true).toBool();
+    showPcInfo = settings.value(SER_SHOWPCINFO, false).toBool();
 
 
     // Perform default settings updates as required based on last default version
@@ -387,6 +389,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_PCSORTMODE, static_cast<int>(pcSortMode));
     settings.setValue(SER_PCTILESCALE, pcTileScale);
     settings.setValue(SER_PCSHOWSECTIONS, pcShowSections);
+    settings.setValue(SER_SHOWPCINFO, showPcInfo);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
@@ -745,6 +748,7 @@ void StreamingPreferences::emitAllChanged()
     emit pcSortModeChanged();
     emit pcTileScaleChanged();
     emit pcShowSectionsChanged();
+    emit showPcInfoChanged();
 }
 
 // ---- Custom Order Management ----
@@ -872,4 +876,74 @@ QString StreamingPreferences::getAppFolder(const QString& computerUuid, const QS
         }
     }
     return QString();
+}
+
+// ---- Custom Shortcut Management ----
+
+QVariantList StreamingPreferences::getCustomShortcuts() const
+{
+    QVariantList result;
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    QStringList actions = settings.childKeys();
+    for (const QString& action : actions) {
+        QVariantMap entry;
+        entry["action"] = action;
+        entry["shortcut"] = settings.value(action).toString();
+        result.append(entry);
+    }
+    settings.endGroup();
+    return result;
+}
+
+void StreamingPreferences::setCustomShortcut(const QString& action, const QString& shortcut)
+{
+    if (action.isEmpty()) return;
+
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    if (shortcut.isEmpty()) {
+        settings.remove(action);
+    } else {
+        settings.setValue(action, shortcut);
+    }
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Set custom shortcut:" << action << "=" << shortcut;
+}
+
+void StreamingPreferences::removeCustomShortcut(const QString& action)
+{
+    if (action.isEmpty()) return;
+
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    settings.remove(action);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Removed custom shortcut for action:" << action;
+}
+
+QString StreamingPreferences::getShortcutForAction(const QString& action) const
+{
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    QString shortcut = settings.value(action).toString();
+    settings.endGroup();
+    return shortcut;
+}
+
+QStringList StreamingPreferences::getAvailableShortcutActions() const
+{
+    QStringList actions;
+    actions << "quit_stream"
+            << "toggle_perf_overlay"
+            << "toggle_fullscreen"
+            << "toggle_mouse_capture"
+            << "disconnect_stream"
+            << "toggle_mute"
+            << "toggle_minimize";
+    return actions;
 }

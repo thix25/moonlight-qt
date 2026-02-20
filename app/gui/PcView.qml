@@ -22,6 +22,7 @@ Item {
 
     property bool showSections: StreamingPreferences.pcShowSections
     property var collapsedSections: ({})
+    property bool showPcInfo: StreamingPreferences.showPcInfo
 
     id: pcViewRoot
     objectName: qsTr("Computers")
@@ -182,6 +183,33 @@ Item {
                     ToolTip.delay: 1000
                 }
 
+                // Toggle PC info overlay
+                ToolButton {
+                    id: infoToggleButton
+                    text: "ℹ"
+                    font.pointSize: 18
+                    opacity: showPcInfo ? 1.0 : 0.5
+                    onClicked: {
+                        StreamingPreferences.showPcInfo = !StreamingPreferences.showPcInfo
+                        StreamingPreferences.save()
+                        showPcInfo = StreamingPreferences.showPcInfo
+                        // Force model refresh to update settings summaries
+                        computerModel.refreshSort()
+                    }
+                    ToolTip.text: showPcInfo ? qsTr("Hide PC Settings Info") : qsTr("Show PC Settings Info (resolution, FPS, codec...)")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width * 0.6
+                        height: 2
+                        color: "#4CAF50"
+                        visible: showPcInfo
+                    }
+                }
+
                 // Tile size slider
                 Label {
                     text: "🔍"
@@ -302,6 +330,7 @@ Item {
                     pcSectionContextMenu.pcWakeable = !model.online && model.wakeable
                     pcSectionContextMenu.pcUuid = model.uuid
                     pcSectionContextMenu.pcDetails = model.details
+                    pcSectionContextMenu.pcHasClientSettings = model.hasClientSettings
                     if (pcSectionContextMenu.popup) {
                         pcSectionContextMenu.popup()
                     } else {
@@ -353,11 +382,33 @@ Item {
                         Layout.fillWidth: true
                         spacing: 2
 
-                        Label {
-                            text: model.name
-                            font.pointSize: Math.round(18 * tileScale)
-                            elide: Label.ElideRight
+                        RowLayout {
                             Layout.fillWidth: true
+                            spacing: 6
+
+                            Label {
+                                text: model.name
+                                font.pointSize: Math.round(18 * tileScale)
+                                elide: Label.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            // Global/Custom indicator badge
+                            Rectangle {
+                                visible: showPcInfo && model.online && model.paired
+                                width: globalCustomLabel.implicitWidth + 10
+                                height: globalCustomLabel.implicitHeight + 4
+                                radius: 3
+                                color: model.hasClientSettings ? "#2196F3" : "#666666"
+
+                                Label {
+                                    id: globalCustomLabel
+                                    anchors.centerIn: parent
+                                    text: model.hasClientSettings ? qsTr("Custom") : qsTr("Global")
+                                    font.pointSize: Math.max(7, Math.round(8 * tileScale))
+                                    color: "white"
+                                }
+                            }
                         }
 
                         Label {
@@ -367,6 +418,17 @@ Item {
                             font.pointSize: Math.round(11 * tileScale)
                             opacity: 0.6
                             color: model.online ? (model.paired ? "#4CAF50" : "#FF9800") : "#9E9E9E"
+                        }
+
+                        // Settings info line
+                        Label {
+                            visible: showPcInfo && model.online && model.paired
+                            text: model.settingsSummary || ""
+                            font.pointSize: Math.max(7, Math.round(9 * tileScale))
+                            color: "#9E9E9E"
+                            opacity: 0.8
+                            elide: Label.ElideRight
+                            Layout.fillWidth: true
                         }
                     }
 
@@ -613,6 +675,8 @@ Item {
                                     property bool pcServerSupported: pcGridFlickable.dataVersion >= 0 && !!computerModel.data(computerModel.index(pcModelIndex, 0), 262)
                                     property string pcDetails: pcGridFlickable.dataVersion >= 0 ? (computerModel.data(computerModel.index(pcModelIndex, 0), 263) || "") : ""
                                     property string pcUuid: pcGridFlickable.dataVersion >= 0 ? (computerModel.data(computerModel.index(pcModelIndex, 0), 264) || "") : ""
+                                    property bool pcHasClientSettings: pcGridFlickable.dataVersion >= 0 && !!computerModel.data(computerModel.index(pcModelIndex, 0), 266)
+                                    property string pcSettingsSummary: pcGridFlickable.dataVersion >= 0 ? (computerModel.data(computerModel.index(pcModelIndex, 0), 267) || "") : ""
 
                                     width: tileItemWidth
                                     height: tileItemHeight
@@ -641,11 +705,51 @@ Item {
                                         text: pcName
                                         width: parent.width
                                         anchors.top: gridPcIcon.bottom
-                                        anchors.bottom: parent.bottom
+                                        anchors.bottom: pcInfoColumn.visible ? pcInfoColumn.top : parent.bottom
                                         font.pointSize: Math.round(36 * tileScale)
                                         horizontalAlignment: Text.AlignHCenter
                                         wrapMode: Text.Wrap
                                         elide: Text.ElideRight
+                                    }
+
+                                    // Settings info overlay at the bottom of the tile
+                                    Column {
+                                        id: pcInfoColumn
+                                        visible: showPcInfo && pcOnline && pcPaired
+                                        anchors.bottom: parent.bottom
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.margins: 4
+                                        spacing: 2
+
+                                        // Global/Custom badge
+                                        Rectangle {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            width: gridBadgeLabel.implicitWidth + 8
+                                            height: gridBadgeLabel.implicitHeight + 2
+                                            radius: 2
+                                            color: pcHasClientSettings ? "#2196F3" : "#555555"
+
+                                            Label {
+                                                id: gridBadgeLabel
+                                                anchors.centerIn: parent
+                                                text: pcHasClientSettings ? qsTr("Custom") : qsTr("Global")
+                                                font.pointSize: Math.max(6, Math.round(7 * tileScale))
+                                                color: "white"
+                                            }
+                                        }
+
+                                        // Compact settings summary
+                                        Label {
+                                            width: parent.width
+                                            text: pcSettingsSummary || ""
+                                            font.pointSize: Math.max(6, Math.round(7 * tileScale))
+                                            color: "#AAAAAA"
+                                            horizontalAlignment: Text.AlignHCenter
+                                            wrapMode: Text.Wrap
+                                            maximumLineCount: 2
+                                            elide: Text.ElideRight
+                                        }
                                     }
 
                                     onClicked: pcClicked(pcModelIndex, pcOnline, pcPaired, pcServerSupported, pcName, pcUuid)
@@ -702,6 +806,26 @@ Item {
                                                     clientSettingsDialog.clientName = pcName
                                                     clientSettingsDialog.clientUuid = pcUuid
                                                     clientSettingsDialog.open()
+                                                }
+                                            }
+                                            MenuItem {
+                                                text: pcHasClientSettings ? "✓ " + qsTr("Uses Custom Settings") : qsTr("Uses Global Settings")
+                                                enabled: false
+                                                font.italic: true
+                                                visible: pcOnline && pcPaired
+                                            }
+                                            NavigableMenuItem {
+                                                text: pcHasClientSettings ? qsTr("Switch to Global Settings") : qsTr("Create Custom Settings")
+                                                visible: pcOnline && pcPaired
+                                                onTriggered: {
+                                                    if (pcHasClientSettings) {
+                                                        StreamingPreferences.resetClientSettings(pcUuid)
+                                                        computerModel.refreshSort()
+                                                    } else {
+                                                        clientSettingsDialog.clientName = pcName
+                                                        clientSettingsDialog.clientUuid = pcUuid
+                                                        clientSettingsDialog.open()
+                                                    }
                                                 }
                                             }
                                             NavigableMenuItem {
@@ -805,6 +929,7 @@ Item {
         property bool pcWakeable: false
         property string pcUuid: ""
         property string pcDetails: ""
+        property bool pcHasClientSettings: false
 
         MenuItem {
             text: qsTr("PC Status: %1").arg(pcSectionContextMenu.pcOnline ? qsTr("Online") : qsTr("Offline"))
@@ -838,6 +963,26 @@ Item {
                 clientSettingsDialog.clientName = pcSectionContextMenu.pcName
                 clientSettingsDialog.clientUuid = pcSectionContextMenu.pcUuid
                 clientSettingsDialog.open()
+            }
+        }
+        MenuItem {
+            text: pcSectionContextMenu.pcHasClientSettings ? "✓ " + qsTr("Uses Custom Settings") : qsTr("Uses Global Settings")
+            enabled: false
+            font.italic: true
+            visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
+        }
+        NavigableMenuItem {
+            text: pcSectionContextMenu.pcHasClientSettings ? qsTr("Switch to Global Settings") : qsTr("Create Custom Settings")
+            visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
+            onTriggered: {
+                if (pcSectionContextMenu.pcHasClientSettings) {
+                    StreamingPreferences.resetClientSettings(pcSectionContextMenu.pcUuid)
+                    computerModel.refreshSort()
+                } else {
+                    clientSettingsDialog.clientName = pcSectionContextMenu.pcName
+                    clientSettingsDialog.clientUuid = pcSectionContextMenu.pcUuid
+                    clientSettingsDialog.open()
+                }
             }
         }
         NavigableMenuItem {

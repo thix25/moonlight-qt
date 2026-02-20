@@ -185,8 +185,16 @@ public:
     Q_PROPERTY(PcSortMode pcSortMode MEMBER pcSortMode NOTIFY pcSortModeChanged)
     Q_PROPERTY(int pcTileScale MEMBER pcTileScale NOTIFY pcTileScaleChanged)
     Q_PROPERTY(bool pcShowSections MEMBER pcShowSections NOTIFY pcShowSectionsChanged)
+    Q_PROPERTY(bool showPcInfo MEMBER showPcInfo NOTIFY showPcInfoChanged)
 
     Q_INVOKABLE bool retranslate();
+
+    // Custom shortcut management
+    Q_INVOKABLE QVariantList getCustomShortcuts() const;
+    Q_INVOKABLE void setCustomShortcut(const QString& action, const QString& shortcut);
+    Q_INVOKABLE void removeCustomShortcut(const QString& action);
+    Q_INVOKABLE QString getShortcutForAction(const QString& action) const;
+    Q_INVOKABLE QStringList getAvailableShortcutActions() const;
 
     // Custom order management for apps (per computer)
     Q_INVOKABLE QStringList getAppCustomOrder(const QString& computerUuid) const;
@@ -252,6 +260,7 @@ public:
     PcSortMode pcSortMode;
     int pcTileScale;
     bool pcShowSections;
+    bool showPcInfo;
 
 signals:
     void displayModeChanged();
@@ -295,6 +304,7 @@ signals:
     void pcSortModeChanged();
     void pcTileScaleChanged();
     void pcShowSectionsChanged();
+    void showPcInfoChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

@@ -1892,5 +1892,274 @@ Flickable {
                 }
             }
         }
+
+        GroupBox {
+            id: shortcutsSettingsGroupBox
+            width: (parent.width - (parent.leftPadding + parent.rightPadding))
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Keyboard Shortcuts") + "</font>"
+            font.pointSize: 12
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                Label {
+                    width: parent.width
+                    text: qsTr("View and customize keyboard shortcuts used during streaming. Changes are saved to your Moonlight configuration.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+
+                // Built-in shortcuts (read-only)
+                Label {
+                    width: parent.width
+                    text: qsTr("Built-in Shortcuts")
+                    font.pointSize: 12
+                    font.bold: true
+                    topPadding: 5
+                }
+
+                GridLayout {
+                    width: parent.width
+                    columns: 2
+                    columnSpacing: 15
+                    rowSpacing: 3
+
+                    Label { text: qsTr("Quit Stream"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+Q"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Toggle Performance Overlay"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+S"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Toggle Fullscreen"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+X"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Toggle Mouse Capture"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+Z"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Disconnect Stream"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+D"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Toggle Mute"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+M"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Minimize Window"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Ctrl+Alt+Shift+N"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Toggle Perf Overlay (Gamepad)"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Select+L1+R1+X"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+
+                    Label { text: qsTr("Disconnect (Gamepad)"); font.pointSize: 10; color: "#BBBBBB" }
+                    Label { text: "Select+L1+R1+B / Hold Esc"; font.pointSize: 10; font.family: "Consolas"; color: "#90CAF9" }
+                }
+
+                // Custom shortcuts
+                Label {
+                    width: parent.width
+                    text: qsTr("Custom Shortcut Overrides")
+                    font.pointSize: 12
+                    font.bold: true
+                    topPadding: 10
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Set custom keyboard shortcuts for streaming actions. These override the defaults above. Use modifier+key format (e.g., Ctrl+Alt+Q).")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    color: "#BBBBBB"
+                }
+
+                Repeater {
+                    id: customShortcutsRepeater
+                    model: ListModel {
+                        id: shortcutActionsModel
+                    }
+
+                    Component.onCompleted: {
+                        // Build the model from available actions
+                        var actions = StreamingPreferences.getAvailableShortcutActions()
+                        var friendlyNames = {
+                            "quit_stream": qsTr("Quit Stream"),
+                            "toggle_perf_overlay": qsTr("Toggle Performance Overlay"),
+                            "toggle_fullscreen": qsTr("Toggle Fullscreen"),
+                            "toggle_mouse_capture": qsTr("Toggle Mouse Capture"),
+                            "disconnect_stream": qsTr("Disconnect Stream"),
+                            "toggle_mute": qsTr("Toggle Mute"),
+                            "toggle_minimize": qsTr("Minimize Window")
+                        }
+
+                        for (var i = 0; i < actions.length; i++) {
+                            var action = actions[i]
+                            var currentShortcut = StreamingPreferences.getShortcutForAction(action)
+                            shortcutActionsModel.append({
+                                "actionId": action,
+                                "friendlyName": friendlyNames[action] || action,
+                                "currentShortcut": currentShortcut || ""
+                            })
+                        }
+                    }
+
+                    delegate: RowLayout {
+                        width: parent.width
+                        spacing: 8
+
+                        Label {
+                            text: model.friendlyName
+                            font.pointSize: 10
+                            Layout.preferredWidth: 170
+                            elide: Text.ElideRight
+                        }
+
+                        TextField {
+                            id: shortcutField
+                            Layout.fillWidth: true
+                            font.pointSize: 10
+                            font.family: "Consolas"
+                            placeholderText: qsTr("Click & press keys...")
+                            text: model.currentShortcut
+                            readOnly: true
+                            color: text ? "#90CAF9" : "#666666"
+
+                            property var pendingModifiers: []
+                            property string pendingKey: ""
+                            property bool recording: false
+
+                            background: Rectangle {
+                                color: shortcutField.recording ? "#3D3D3D" : "#2B2B2B"
+                                border.color: shortcutField.recording ? "#4CAF50" : (shortcutField.activeFocus ? "#2196F3" : "#555555")
+                                border.width: shortcutField.recording ? 2 : 1
+                                radius: 3
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    shortcutField.forceActiveFocus()
+                                    shortcutField.recording = true
+                                    shortcutField.pendingModifiers = []
+                                    shortcutField.pendingKey = ""
+                                }
+                            }
+
+                            Keys.onPressed: {
+                                if (!recording) return
+
+                                event.accepted = true
+
+                                // Track modifiers
+                                var mods = []
+                                if (event.modifiers & Qt.ControlModifier) mods.push("Ctrl")
+                                if (event.modifiers & Qt.AltModifier) mods.push("Alt")
+                                if (event.modifiers & Qt.ShiftModifier) mods.push("Shift")
+                                if (event.modifiers & Qt.MetaModifier) mods.push("Meta")
+
+                                // Ignore pure modifier presses
+                                var key = event.key
+                                if (key === Qt.Key_Control || key === Qt.Key_Alt ||
+                                    key === Qt.Key_Shift || key === Qt.Key_Meta) {
+                                    pendingModifiers = mods
+                                    return
+                                }
+
+                                // Map key to string
+                                var keyStr = ""
+                                if (key >= Qt.Key_A && key <= Qt.Key_Z) {
+                                    keyStr = String.fromCharCode(key)
+                                } else if (key >= Qt.Key_0 && key <= Qt.Key_9) {
+                                    keyStr = String.fromCharCode(key)
+                                } else if (key >= Qt.Key_F1 && key <= Qt.Key_F12) {
+                                    keyStr = "F" + (key - Qt.Key_F1 + 1)
+                                } else if (key === Qt.Key_Escape) {
+                                    // Escape cancels recording
+                                    recording = false
+                                    return
+                                } else if (key === Qt.Key_Space) {
+                                    keyStr = "Space"
+                                } else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
+                                    keyStr = "Return"
+                                } else if (key === Qt.Key_Tab) {
+                                    keyStr = "Tab"
+                                } else if (key === Qt.Key_Delete) {
+                                    // Delete key clears the shortcut
+                                    if (mods.length === 0) {
+                                        shortcutField.text = ""
+                                        shortcutActionsModel.setProperty(index, "currentShortcut", "")
+                                        StreamingPreferences.removeCustomShortcut(model.actionId)
+                                        recording = false
+                                        return
+                                    }
+                                    keyStr = "Delete"
+                                } else if (key === Qt.Key_Backspace) {
+                                    keyStr = "Backspace"
+                                } else if (key === Qt.Key_Home) {
+                                    keyStr = "Home"
+                                } else if (key === Qt.Key_End) {
+                                    keyStr = "End"
+                                } else if (key === Qt.Key_PageUp) {
+                                    keyStr = "PageUp"
+                                } else if (key === Qt.Key_PageDown) {
+                                    keyStr = "PageDown"
+                                } else if (key === Qt.Key_Up) {
+                                    keyStr = "Up"
+                                } else if (key === Qt.Key_Down) {
+                                    keyStr = "Down"
+                                } else if (key === Qt.Key_Left) {
+                                    keyStr = "Left"
+                                } else if (key === Qt.Key_Right) {
+                                    keyStr = "Right"
+                                } else if (key === Qt.Key_Insert) {
+                                    keyStr = "Insert"
+                                } else {
+                                    // Unknown key, skip
+                                    return
+                                }
+
+                                // Build the shortcut string
+                                var shortcutStr = mods.length > 0 ? mods.join("+") + "+" + keyStr : keyStr
+                                shortcutField.text = shortcutStr
+                                shortcutActionsModel.setProperty(index, "currentShortcut", shortcutStr)
+                                StreamingPreferences.setCustomShortcut(model.actionId, shortcutStr)
+                                recording = false
+                            }
+
+                            onActiveFocusChanged: {
+                                if (!activeFocus) {
+                                    recording = false
+                                }
+                            }
+                        }
+
+                        ToolButton {
+                            text: "✕"
+                            font.pointSize: 10
+                            implicitWidth: 30
+                            implicitHeight: 30
+                            visible: model.currentShortcut !== ""
+                            onClicked: {
+                                shortcutField.text = ""
+                                shortcutActionsModel.setProperty(index, "currentShortcut", "")
+                                StreamingPreferences.removeCustomShortcut(model.actionId)
+                            }
+
+                            ToolTip.text: qsTr("Clear shortcut")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 500
+                        }
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Click a field and press your desired key combination. Press Escape to cancel, Delete to clear.")
+                    font.pointSize: 8
+                    font.italic: true
+                    color: "#888888"
+                    wrapMode: Text.Wrap
+                    topPadding: 5
+                }
+            }
+        }
     }
 }
