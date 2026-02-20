@@ -143,10 +143,13 @@ Item {
                     ToolTip.visible: hovered
                     ToolTip.delay: 1000
 
-                    // Refresh when model resets (e.g. after moveApp auto-switches to custom)
+                    // Refresh when model resets or rows move (e.g. after moveApp auto-switches to custom)
                     Connections {
                         target: appModel
                         function onModelReset() {
+                            sortModeCombo.currentIndex = appModel.getSortMode()
+                        }
+                        function onRowsMoved() {
                             sortModeCombo.currentIndex = appModel.getSortMode()
                         }
                     }
@@ -550,19 +553,16 @@ Item {
                         // Move up/down for custom ordering
                         NavigableMenuItem {
                             text: qsTr("Move Up")
-                            visible: appModel.getSortMode() === 1
                             enabled: model.index > 0
                             onTriggered: appModel.moveApp(model.index, model.index - 1)
                         }
                         NavigableMenuItem {
                             text: qsTr("Move Down")
-                            visible: appModel.getSortMode() === 1
                             enabled: model.index < appModel.count() - 1
                             onTriggered: appModel.moveApp(model.index, model.index + 1)
                         }
                         NavigableMenuItem {
                             text: qsTr("Move to Position...")
-                            visible: appModel.getSortMode() === 1
                             onTriggered: {
                                 moveAppToPositionDialog.currentIndex = model.index
                                 moveAppToPositionDialog.maxCount = appModel.count()
@@ -806,19 +806,16 @@ Item {
 
         NavigableMenuItem {
             text: qsTr("Move Up")
-            visible: appModel.getSortMode() === 1
             enabled: listContextMenu.appIndex > 0
             onTriggered: appModel.moveApp(listContextMenu.appIndex, listContextMenu.appIndex - 1)
         }
         NavigableMenuItem {
             text: qsTr("Move Down")
-            visible: appModel.getSortMode() === 1
             enabled: listContextMenu.appIndex < appModel.count() - 1
             onTriggered: appModel.moveApp(listContextMenu.appIndex, listContextMenu.appIndex + 1)
         }
         NavigableMenuItem {
             text: qsTr("Move to Position...")
-            visible: appModel.getSortMode() === 1
             onTriggered: {
                 moveAppToPositionDialog.currentIndex = listContextMenu.appIndex
                 moveAppToPositionDialog.maxCount = appModel.count()
