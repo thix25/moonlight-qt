@@ -1,7 +1,16 @@
 #include "appmodel.h"
+#include "settings/streamingpreferences.h"
+
+#include <QSettings>
+#include <algorithm>
 
 AppModel::AppModel(QObject *parent)
-    : QAbstractListModel(parent)
+    : QAbstractListModel(parent),
+      m_Computer(nullptr),
+      m_ComputerManager(nullptr),
+      m_CurrentGameId(0),
+      m_ShowHiddenGames(false),
+      m_SortMode(0)
 {
     connect(&m_BoxArtManager, &BoxArtManager::boxArtLoadComplete,
             this, &AppModel::handleBoxArtLoaded);
@@ -17,6 +26,13 @@ void AppModel::initialize(ComputerManager* computerManager, int computerIndex, b
     m_Computer = m_ComputerManager->getComputers().at(computerIndex);
     m_CurrentGameId = m_Computer->currentGameId;
     m_ShowHiddenGames = showHiddenGames;
+
+    // Load sort mode from preferences
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    m_SortMode = static_cast<int>(prefs->appSortMode);
+
+    // Load custom order
+    loadCustomOrder();
 
     updateAppList(m_Computer->appList);
 }
@@ -37,6 +53,22 @@ QString AppModel::getRunningAppName()
     }
 
     return nullptr;
+}
+
+QString AppModel::getAppName(int appIndex) const
+{
+    if (appIndex >= 0 && appIndex < m_VisibleApps.count()) {
+        return m_VisibleApps.at(appIndex).name;
+    }
+    return QString();
+}
+
+int AppModel::getAppId(int appIndex) const
+{
+    if (appIndex >= 0 && appIndex < m_VisibleApps.count()) {
+        return m_VisibleApps.at(appIndex).id;
+    }
+    return 0;
 }
 
 Session* AppModel::createSessionForApp(int appIndex)
@@ -93,6 +125,11 @@ QVariant AppModel::data(const QModelIndex &index, int role) const
         return app.directLaunch;
     case AppCollectorGameRole:
         return app.isAppCollectorGame;
+    case FolderRole: {
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        QString folder = prefs->getAppFolder(m_Computer->uuid, QString::number(app.id));
+        return folder;
+    }
     default:
         return QVariant();
     }
@@ -109,6 +146,7 @@ QHash<int, QByteArray> AppModel::roleNames() const
     names[AppIdRole] = "appid";
     names[DirectLaunchRole] = "directLaunch";
     names[AppCollectorGameRole] = "appCollectorGame";
+    names[FolderRole] = "folder";
 
     return names;
 }
@@ -151,58 +189,136 @@ void AppModel::updateAppList(QVector<NvApp> newList)
 
     QVector<NvApp> newVisibleList = getVisibleApps(newList);
 
-    // Process removals and updates first
-    for (int i = 0; i < m_VisibleApps.count(); i++) {
-        const NvApp& existingApp = m_VisibleApps.at(i);
-
-        bool found = false;
-        for (const NvApp& newApp : newVisibleList) {
-            if (existingApp.id == newApp.id) {
-                // If the data changed, update it in our list
-                if (existingApp != newApp) {
-                    m_VisibleApps.replace(i, newApp);
-                    emit dataChanged(createIndex(i, 0), createIndex(i, 0));
-                }
-
-                found = true;
-                break;
+    // Apply folder filter if we're inside a folder
+    if (!m_CurrentFolder.isEmpty()) {
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        QStringList folderApps = prefs->getAppsInFolder(m_Computer->uuid, m_CurrentFolder);
+        QVector<NvApp> filtered;
+        for (const NvApp& app : newVisibleList) {
+            if (folderApps.contains(QString::number(app.id))) {
+                filtered.append(app);
             }
         }
-
-        if (!found) {
-            beginRemoveRows(QModelIndex(), i, i);
-            m_VisibleApps.removeAt(i);
-            endRemoveRows();
-            i--;
-        }
+        newVisibleList = filtered;
     }
 
-    // Process additions now
-    for (const NvApp& newApp : newVisibleList) {
-        int insertionIndex = m_VisibleApps.size();
-        bool found = false;
-
-        for (int i = 0; i < m_VisibleApps.count(); i++) {
-            const NvApp& existingApp = m_VisibleApps.at(i);
-
-            if (existingApp.id == newApp.id) {
-                found = true;
-                break;
-            }
-            else if (existingApp.name.toLower() > newApp.name.toLower()) {
-                insertionIndex = i;
-                break;
-            }
-        }
-
-        if (!found) {
-            beginInsertRows(QModelIndex(), insertionIndex, insertionIndex);
-            m_VisibleApps.insert(insertionIndex, newApp);
-            endInsertRows();
-        }
+    // Sort the list according to current mode
+    if (m_SortMode == 1 && !m_CustomOrder.isEmpty()) {
+        // Custom sort: order by position in m_CustomOrder
+        std::sort(newVisibleList.begin(), newVisibleList.end(),
+                  [this](const NvApp& a, const NvApp& b) {
+            int idxA = m_CustomOrder.indexOf(QString::number(a.id));
+            int idxB = m_CustomOrder.indexOf(QString::number(b.id));
+            // Apps not in custom order go to the end, alphabetically
+            if (idxA < 0 && idxB < 0) return a.name.toLower() < b.name.toLower();
+            if (idxA < 0) return false;
+            if (idxB < 0) return true;
+            return idxA < idxB;
+        });
+    } else {
+        // Alphabetical sort (default)
+        std::sort(newVisibleList.begin(), newVisibleList.end(),
+                  [](const NvApp& a, const NvApp& b) {
+            return a.name.toLower() < b.name.toLower();
+        });
     }
 
-    Q_ASSERT(newVisibleList == m_VisibleApps);
+    // Full model reset for simplicity
+    beginResetModel();
+    m_VisibleApps = newVisibleList;
+    endResetModel();
+}
+
+void AppModel::sortVisibleApps()
+{
+    updateAppList(m_AllApps);
+}
+
+void AppModel::setSortMode(int mode)
+{
+    if (m_SortMode != mode) {
+        m_SortMode = mode;
+
+        // Persist to preferences
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->appSortMode = static_cast<StreamingPreferences::AppSortMode>(mode);
+        prefs->save();
+
+        // Re-sort the list
+        sortVisibleApps();
+    }
+}
+
+int AppModel::getSortMode() const
+{
+    return m_SortMode;
+}
+
+void AppModel::moveApp(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= m_VisibleApps.count() ||
+        toIndex < 0 || toIndex >= m_VisibleApps.count() ||
+        fromIndex == toIndex) {
+        return;
+    }
+
+    // Switch to custom mode if not already
+    if (m_SortMode != 1) {
+        m_SortMode = 1;
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->appSortMode = StreamingPreferences::ASM_CUSTOM;
+        prefs->save();
+    }
+
+    // Perform the move in the model
+    int destIndex = toIndex > fromIndex ? toIndex + 1 : toIndex;
+    beginMoveRows(QModelIndex(), fromIndex, fromIndex, QModelIndex(), destIndex);
+    m_VisibleApps.move(fromIndex, toIndex);
+    endMoveRows();
+
+    // Update and save custom order
+    m_CustomOrder.clear();
+    for (const NvApp& app : m_VisibleApps) {
+        m_CustomOrder.append(QString::number(app.id));
+    }
+    saveCustomOrder();
+}
+
+QString AppModel::getComputerUuid() const
+{
+    if (m_Computer) {
+        return m_Computer->uuid;
+    }
+    return QString();
+}
+
+void AppModel::setCurrentFolder(const QString& folderName)
+{
+    if (m_CurrentFolder != folderName) {
+        m_CurrentFolder = folderName;
+        sortVisibleApps();
+    }
+}
+
+QString AppModel::getCurrentFolder() const
+{
+    return m_CurrentFolder;
+}
+
+void AppModel::saveCustomOrder()
+{
+    if (m_Computer) {
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->setAppCustomOrder(m_Computer->uuid, m_CustomOrder);
+    }
+}
+
+void AppModel::loadCustomOrder()
+{
+    if (m_Computer) {
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        m_CustomOrder = prefs->getAppCustomOrder(m_Computer->uuid);
+    }
 }
 
 void AppModel::setAppHidden(int appIndex, bool hidden)

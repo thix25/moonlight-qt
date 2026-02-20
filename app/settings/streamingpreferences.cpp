@@ -51,6 +51,12 @@
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
+#define SER_APPSORTMODE "appsortmode"
+#define SER_APPVIEWMODE "appviewmode"
+#define SER_APPTILESCALE "apptilescale"
+#define SER_PCSORTMODE "pcsortmode"
+#define SER_PCTILESCALE "pctilescale"
+#define SER_PCSHOWSECTIONS "pcshowsections"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -168,6 +174,15 @@ void StreamingPreferences::reload()
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
+    appSortMode = static_cast<AppSortMode>(settings.value(SER_APPSORTMODE,
+                                                          static_cast<int>(AppSortMode::ASM_ALPHABETICAL)).toInt());
+    appViewMode = static_cast<AppViewMode>(settings.value(SER_APPVIEWMODE,
+                                                          static_cast<int>(AppViewMode::AVM_GRID)).toInt());
+    appTileScale = settings.value(SER_APPTILESCALE, 100).toInt();
+    pcSortMode = static_cast<PcSortMode>(settings.value(SER_PCSORTMODE,
+                                                        static_cast<int>(PcSortMode::PSM_ALPHABETICAL)).toInt());
+    pcTileScale = settings.value(SER_PCTILESCALE, 100).toInt();
+    pcShowSections = settings.value(SER_PCSHOWSECTIONS, true).toBool();
 
 
     // Perform default settings updates as required based on last default version
@@ -366,6 +381,12 @@ void StreamingPreferences::save()
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_APPSORTMODE, static_cast<int>(appSortMode));
+    settings.setValue(SER_APPVIEWMODE, static_cast<int>(appViewMode));
+    settings.setValue(SER_APPTILESCALE, appTileScale);
+    settings.setValue(SER_PCSORTMODE, static_cast<int>(pcSortMode));
+    settings.setValue(SER_PCTILESCALE, pcTileScale);
+    settings.setValue(SER_PCSHOWSECTIONS, pcShowSections);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
@@ -718,4 +739,137 @@ void StreamingPreferences::emitAllChanged()
     emit captureSysKeysModeChanged();
     emit keepAwakeChanged();
     emit languageChanged();
+    emit appSortModeChanged();
+    emit appViewModeChanged();
+    emit appTileScaleChanged();
+    emit pcSortModeChanged();
+    emit pcTileScaleChanged();
+    emit pcShowSectionsChanged();
+}
+
+// ---- Custom Order Management ----
+
+QStringList StreamingPreferences::getAppCustomOrder(const QString& computerUuid) const
+{
+    QSettings settings;
+    return settings.value("appCustomOrder/" + computerUuid).toStringList();
+}
+
+void StreamingPreferences::setAppCustomOrder(const QString& computerUuid, const QStringList& appIds)
+{
+    QSettings settings;
+    settings.setValue("appCustomOrder/" + computerUuid, appIds);
+    settings.sync();
+}
+
+QStringList StreamingPreferences::getPcCustomOrder() const
+{
+    QSettings settings;
+    return settings.value("pcCustomOrder").toStringList();
+}
+
+void StreamingPreferences::setPcCustomOrder(const QStringList& pcUuids)
+{
+    QSettings settings;
+    settings.setValue("pcCustomOrder", pcUuids);
+    settings.sync();
+}
+
+// ---- Folder Management ----
+
+QStringList StreamingPreferences::getAppFolders(const QString& computerUuid) const
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid);
+    QStringList folders = settings.childGroups();
+    settings.endGroup();
+    return folders;
+}
+
+void StreamingPreferences::createAppFolder(const QString& computerUuid, const QString& folderName)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    settings.setValue("created", true);
+    if (!settings.contains("apps")) {
+        settings.setValue("apps", QStringList());
+    }
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::deleteAppFolder(const QString& computerUuid, const QString& folderName)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid);
+    settings.remove(folderName);
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::renameAppFolder(const QString& computerUuid, const QString& oldName, const QString& newName)
+{
+    QSettings settings;
+    // Read apps from old folder
+    settings.beginGroup("appFolders/" + computerUuid + "/" + oldName);
+    QStringList apps = settings.value("apps").toStringList();
+    settings.endGroup();
+
+    // Create new folder with same apps
+    settings.beginGroup("appFolders/" + computerUuid + "/" + newName);
+    settings.setValue("created", true);
+    settings.setValue("apps", apps);
+    settings.endGroup();
+
+    // Delete old folder
+    settings.beginGroup("appFolders/" + computerUuid);
+    settings.remove(oldName);
+    settings.endGroup();
+    settings.sync();
+}
+
+QStringList StreamingPreferences::getAppsInFolder(const QString& computerUuid, const QString& folderName) const
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    QStringList apps = settings.value("apps").toStringList();
+    settings.endGroup();
+    return apps;
+}
+
+void StreamingPreferences::setAppsInFolder(const QString& computerUuid, const QString& folderName, const QStringList& appIds)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    settings.setValue("apps", appIds);
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::addAppToFolder(const QString& computerUuid, const QString& folderName, const QString& appId)
+{
+    QStringList apps = getAppsInFolder(computerUuid, folderName);
+    if (!apps.contains(appId)) {
+        apps.append(appId);
+        setAppsInFolder(computerUuid, folderName, apps);
+    }
+}
+
+void StreamingPreferences::removeAppFromFolder(const QString& computerUuid, const QString& folderName, const QString& appId)
+{
+    QStringList apps = getAppsInFolder(computerUuid, folderName);
+    apps.removeAll(appId);
+    setAppsInFolder(computerUuid, folderName, apps);
+}
+
+QString StreamingPreferences::getAppFolder(const QString& computerUuid, const QString& appId) const
+{
+    QStringList folders = getAppFolders(computerUuid);
+    for (const QString& folder : folders) {
+        QStringList apps = getAppsInFolder(computerUuid, folder);
+        if (apps.contains(appId)) {
+            return folder;
+        }
+    }
+    return QString();
 }

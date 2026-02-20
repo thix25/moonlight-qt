@@ -4,6 +4,7 @@
 #include <QRect>
 #include <QVariant>
 #include <QQmlEngine>
+#include <QStringList>
 
 class QSettings;
 
@@ -120,6 +121,27 @@ public:
     };
     Q_ENUM(CaptureSysKeysMode);
 
+    enum AppSortMode
+    {
+        ASM_ALPHABETICAL,
+        ASM_CUSTOM,
+    };
+    Q_ENUM(AppSortMode);
+
+    enum AppViewMode
+    {
+        AVM_GRID,
+        AVM_LIST,
+    };
+    Q_ENUM(AppViewMode);
+
+    enum PcSortMode
+    {
+        PSM_ALPHABETICAL,
+        PSM_CUSTOM,
+    };
+    Q_ENUM(PcSortMode);
+
     Q_PROPERTY(int width MEMBER width NOTIFY displayModeChanged)
     Q_PROPERTY(int height MEMBER height NOTIFY displayModeChanged)
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
@@ -157,8 +179,33 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+    Q_PROPERTY(AppSortMode appSortMode MEMBER appSortMode NOTIFY appSortModeChanged)
+    Q_PROPERTY(AppViewMode appViewMode MEMBER appViewMode NOTIFY appViewModeChanged)
+    Q_PROPERTY(int appTileScale MEMBER appTileScale NOTIFY appTileScaleChanged)
+    Q_PROPERTY(PcSortMode pcSortMode MEMBER pcSortMode NOTIFY pcSortModeChanged)
+    Q_PROPERTY(int pcTileScale MEMBER pcTileScale NOTIFY pcTileScaleChanged)
+    Q_PROPERTY(bool pcShowSections MEMBER pcShowSections NOTIFY pcShowSectionsChanged)
 
     Q_INVOKABLE bool retranslate();
+
+    // Custom order management for apps (per computer)
+    Q_INVOKABLE QStringList getAppCustomOrder(const QString& computerUuid) const;
+    Q_INVOKABLE void setAppCustomOrder(const QString& computerUuid, const QStringList& appIds);
+
+    // Custom order management for PCs
+    Q_INVOKABLE QStringList getPcCustomOrder() const;
+    Q_INVOKABLE void setPcCustomOrder(const QStringList& pcUuids);
+
+    // Folder management for apps (per computer)
+    Q_INVOKABLE QStringList getAppFolders(const QString& computerUuid) const;
+    Q_INVOKABLE void createAppFolder(const QString& computerUuid, const QString& folderName);
+    Q_INVOKABLE void deleteAppFolder(const QString& computerUuid, const QString& folderName);
+    Q_INVOKABLE void renameAppFolder(const QString& computerUuid, const QString& oldName, const QString& newName);
+    Q_INVOKABLE QStringList getAppsInFolder(const QString& computerUuid, const QString& folderName) const;
+    Q_INVOKABLE void setAppsInFolder(const QString& computerUuid, const QString& folderName, const QStringList& appIds);
+    Q_INVOKABLE void addAppToFolder(const QString& computerUuid, const QString& folderName, const QString& appId);
+    Q_INVOKABLE void removeAppFromFolder(const QString& computerUuid, const QString& folderName, const QString& appId);
+    Q_INVOKABLE QString getAppFolder(const QString& computerUuid, const QString& appId) const;
 
     // Directly accessible members for preferences
     int width;
@@ -199,6 +246,12 @@ public:
     UIDisplayMode uiDisplayMode;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
+    AppSortMode appSortMode;
+    AppViewMode appViewMode;
+    int appTileScale;
+    PcSortMode pcSortMode;
+    int pcTileScale;
+    bool pcShowSections;
 
 signals:
     void displayModeChanged();
@@ -236,6 +289,12 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void languageChanged();
+    void appSortModeChanged();
+    void appViewModeChanged();
+    void appTileScaleChanged();
+    void pcSortModeChanged();
+    void pcTileScaleChanged();
+    void pcShowSectionsChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
