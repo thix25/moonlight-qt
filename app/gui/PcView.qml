@@ -34,6 +34,9 @@ Item {
     StackView.onActivated: {
         ComputerManager.computerAddCompleted.connect(addComplete)
 
+        // Refresh model data (e.g. after changing global settings)
+        computerModel.refreshSort()
+
         // Give focus to the active view for gamepad/keyboard navigation
         if (showSections) {
             pcListView.forceActiveFocus()
@@ -331,6 +334,7 @@ Item {
                     pcSectionContextMenu.pcUuid = model.uuid
                     pcSectionContextMenu.pcDetails = model.details
                     pcSectionContextMenu.pcHasClientSettings = model.hasClientSettings
+                    pcSectionContextMenu.pcHasSavedClientSettings = model.hasSavedClientSettings
                     if (pcSectionContextMenu.popup) {
                         pcSectionContextMenu.popup()
                     } else {
@@ -380,7 +384,8 @@ Item {
 
                     // Left: PC name + status
                     ColumnLayout {
-                        Layout.fillWidth: true
+                        Layout.preferredWidth: Math.round(200 * tileScale)
+                        Layout.maximumWidth: Math.round(280 * tileScale)
                         spacing: 2
 
                         Label {
@@ -400,7 +405,24 @@ Item {
                         }
                     }
 
-                    // Status icons (center area)
+                    // Middle: settings info (fills available space)
+                    Label {
+                        visible: showPcInfo && model.online && model.paired
+                        text: model.settingsSummary || ""
+                        font.pointSize: Math.max(7, Math.round(9 * tileScale))
+                        color: "#9E9E9E"
+                        opacity: 0.8
+                        elide: Label.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    // Spacer when info not visible
+                    Item {
+                        visible: !(showPcInfo && model.online && model.paired)
+                        Layout.fillWidth: true
+                    }
+
+                    // Status icons
                     Image {
                         visible: !model.online
                         source: "qrc:/res/warning_FILL1_wght300_GRAD200_opsz24.svg"
@@ -425,83 +447,65 @@ Item {
                         Layout.preferredHeight: Math.round(32 * tileScale)
                     }
 
-                    // Right side: settings info + custom/global toggle
-                    RowLayout {
+                    // Quick toggle: Custom/Global checkbox
+                    Rectangle {
                         visible: showPcInfo && model.online && model.paired
-                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                        spacing: 10
+                        width: listToggleRow.implicitWidth + 12
+                        height: listToggleRow.implicitHeight + 6
+                        radius: 4
+                        color: model.hasClientSettings ? "#1A2196F3" : "#1A666666"
+                        border.color: model.hasClientSettings ? "#2196F3" : "#555555"
+                        border.width: 1
 
-                        // Settings summary text on the right
-                        Label {
-                            text: model.settingsSummary || ""
-                            font.pointSize: Math.max(7, Math.round(9 * tileScale))
-                            color: "#9E9E9E"
-                            opacity: 0.8
-                            elide: Label.ElideRight
-                            Layout.maximumWidth: 350
-                        }
+                        RowLayout {
+                            id: listToggleRow
+                            anchors.centerIn: parent
+                            spacing: 4
 
-                        // Quick toggle: Custom/Global checkbox
-                        Rectangle {
-                            width: listToggleRow.implicitWidth + 12
-                            height: listToggleRow.implicitHeight + 6
-                            radius: 4
-                            color: model.hasClientSettings ? "#1A2196F3" : "#1A666666"
-                            border.color: model.hasClientSettings ? "#2196F3" : "#555555"
-                            border.width: 1
-
-                            RowLayout {
-                                id: listToggleRow
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Rectangle {
-                                    width: Math.round(14 * tileScale)
-                                    height: Math.round(14 * tileScale)
-                                    radius: 3
-                                    color: model.hasClientSettings ? "#2196F3" : "transparent"
-                                    border.color: model.hasClientSettings ? "#2196F3" : "#888888"
-                                    border.width: 1
-
-                                    Label {
-                                        anchors.centerIn: parent
-                                        text: "✓"
-                                        font.pointSize: Math.max(6, Math.round(8 * tileScale))
-                                        color: "white"
-                                        visible: model.hasClientSettings
-                                    }
-                                }
+                            Rectangle {
+                                width: Math.round(14 * tileScale)
+                                height: Math.round(14 * tileScale)
+                                radius: 3
+                                color: model.hasClientSettings ? "#2196F3" : "transparent"
+                                border.color: model.hasClientSettings ? "#2196F3" : "#888888"
+                                border.width: 1
 
                                 Label {
-                                    text: model.hasClientSettings ? qsTr("Custom") : qsTr("Global")
-                                    font.pointSize: Math.max(7, Math.round(8 * tileScale))
-                                    color: model.hasClientSettings ? "#64B5F6" : "#999999"
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    font.pointSize: Math.max(6, Math.round(8 * tileScale))
+                                    color: "white"
+                                    visible: model.hasClientSettings
                                 }
                             }
 
-                            MouseArea {
-                                id: listToggleMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (model.hasClientSettings) {
-                                        StreamingPreferences.resetClientSettings(model.uuid)
-                                        computerModel.refreshSort()
-                                    } else {
-                                        clientSettingsDialog.clientName = model.name
-                                        clientSettingsDialog.clientUuid = model.uuid
-                                        clientSettingsDialog.open()
-                                    }
-                                }
+                            Label {
+                                text: model.hasClientSettings ? qsTr("Custom") : qsTr("Global")
+                                font.pointSize: Math.max(7, Math.round(8 * tileScale))
+                                color: model.hasClientSettings ? "#64B5F6" : "#999999"
                             }
-
-                            ToolTip.text: model.hasClientSettings ?
-                                qsTr("Click to switch to global settings") :
-                                qsTr("Click to create custom settings for this PC")
-                            ToolTip.visible: listToggleMouseArea.containsMouse
-                            ToolTip.delay: 800
                         }
+
+                        MouseArea {
+                            id: listToggleMouseArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (model.hasClientSettings) {
+                                    StreamingPreferences.deactivateClientSettings(model.uuid)
+                                } else {
+                                    StreamingPreferences.activateClientSettings(model.uuid)
+                                }
+                                computerModel.refreshSort()
+                            }
+                        }
+
+                        ToolTip.text: model.hasClientSettings ?
+                            qsTr("Click to use global settings") :
+                            qsTr("Click to use custom settings for this PC")
+                        ToolTip.visible: listToggleMouseArea.containsMouse
+                        ToolTip.delay: 800
                     }
                 }
 
@@ -724,6 +728,7 @@ Item {
                                     property string pcUuid: pcGridFlickable.dataVersion >= 0 ? (computerModel.data(computerModel.index(pcModelIndex, 0), 264) || "") : ""
                                     property bool pcHasClientSettings: pcGridFlickable.dataVersion >= 0 && !!computerModel.data(computerModel.index(pcModelIndex, 0), 266)
                                     property string pcSettingsSummary: pcGridFlickable.dataVersion >= 0 ? (computerModel.data(computerModel.index(pcModelIndex, 0), 267) || "") : ""
+                                    property bool pcHasSavedClientSettings: pcGridFlickable.dataVersion >= 0 && !!computerModel.data(computerModel.index(pcModelIndex, 0), 268)
 
                                     width: tileItemWidth
                                     height: tileItemHeight
@@ -816,13 +821,11 @@ Item {
                                                 hoverEnabled: true
                                                 onClicked: {
                                                     if (pcHasClientSettings) {
-                                                        StreamingPreferences.resetClientSettings(pcUuid)
-                                                        computerModel.refreshSort()
+                                                        StreamingPreferences.deactivateClientSettings(pcUuid)
                                                     } else {
-                                                        clientSettingsDialog.clientName = pcName
-                                                        clientSettingsDialog.clientUuid = pcUuid
-                                                        clientSettingsDialog.open()
+                                                        StreamingPreferences.activateClientSettings(pcUuid)
                                                     }
+                                                    computerModel.refreshSort()
                                                 }
                                             }
                                         }
@@ -903,11 +906,14 @@ Item {
                                                 visible: pcOnline && pcPaired
                                             }
                                             NavigableMenuItem {
-                                                text: pcHasClientSettings ? qsTr("Switch to Global Settings") : qsTr("Create Custom Settings")
+                                                text: pcHasClientSettings ? qsTr("Switch to Global Settings") : (pcHasSavedClientSettings ? qsTr("Switch to Custom Settings") : qsTr("Create Custom Settings"))
                                                 visible: pcOnline && pcPaired
                                                 onTriggered: {
                                                     if (pcHasClientSettings) {
-                                                        StreamingPreferences.resetClientSettings(pcUuid)
+                                                        StreamingPreferences.deactivateClientSettings(pcUuid)
+                                                        computerModel.refreshSort()
+                                                    } else if (pcHasSavedClientSettings) {
+                                                        StreamingPreferences.activateClientSettings(pcUuid)
                                                         computerModel.refreshSort()
                                                     } else {
                                                         clientSettingsDialog.clientName = pcName
@@ -1018,6 +1024,7 @@ Item {
         property string pcUuid: ""
         property string pcDetails: ""
         property bool pcHasClientSettings: false
+        property bool pcHasSavedClientSettings: false
 
         MenuItem {
             text: qsTr("PC Status: %1").arg(pcSectionContextMenu.pcOnline ? qsTr("Online") : qsTr("Offline"))
@@ -1060,11 +1067,14 @@ Item {
             visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
         }
         NavigableMenuItem {
-            text: pcSectionContextMenu.pcHasClientSettings ? qsTr("Switch to Global Settings") : qsTr("Create Custom Settings")
+            text: pcSectionContextMenu.pcHasClientSettings ? qsTr("Switch to Global Settings") : (pcSectionContextMenu.pcHasSavedClientSettings ? qsTr("Switch to Custom Settings") : qsTr("Create Custom Settings"))
             visible: pcSectionContextMenu.pcOnline && pcSectionContextMenu.pcPaired
             onTriggered: {
                 if (pcSectionContextMenu.pcHasClientSettings) {
-                    StreamingPreferences.resetClientSettings(pcSectionContextMenu.pcUuid)
+                    StreamingPreferences.deactivateClientSettings(pcSectionContextMenu.pcUuid)
+                    computerModel.refreshSort()
+                } else if (pcSectionContextMenu.pcHasSavedClientSettings) {
+                    StreamingPreferences.activateClientSettings(pcSectionContextMenu.pcUuid)
                     computerModel.refreshSort()
                 } else {
                     clientSettingsDialog.clientName = pcSectionContextMenu.pcName

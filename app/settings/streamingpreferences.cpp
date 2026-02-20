@@ -577,6 +577,65 @@ void StreamingPreferences::saveForClient(QString clientUuid)
             << "bitrate:" << bitrateKbps << "kbps";
 }
 
+void StreamingPreferences::deactivateClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to deactivate settings for empty client UUID";
+        return;
+    }
+
+    // Mark client settings as inactive but preserve the data
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    settings.setValue("_active", false);
+    settings.endGroup();
+    settings.sync();
+
+    if (m_CurrentClientUuid == clientUuid) {
+        m_CurrentClientUuid.clear();
+        reload(); // Reload global settings
+    }
+
+    qInfo() << "Deactivated client-specific settings for UUID:" << clientUuid;
+}
+
+void StreamingPreferences::activateClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to activate settings for empty client UUID";
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    QStringList keys = settings.childKeys();
+    // Filter out the _active flag to check if real settings data exists
+    keys.removeAll("_active");
+    bool hasSavedData = !keys.isEmpty();
+    settings.endGroup();
+
+    if (!hasSavedData) {
+        // No previously saved data: copy current global settings to client group.
+        // Ensure we're in global state first so we save correct values.
+        QString prevClientUuid = m_CurrentClientUuid;
+        if (!m_CurrentClientUuid.isEmpty()) {
+            reload(); // Restores global state, clears m_CurrentClientUuid
+        }
+        saveForClient(clientUuid);
+        // saveForClient sets m_CurrentClientUuid; clear it back to global
+        m_CurrentClientUuid.clear();
+    }
+
+    // Mark as active
+    settings.beginGroup("clients/" + clientUuid);
+    settings.setValue("_active", true);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Activated client-specific settings for UUID:" << clientUuid
+            << "(had saved data:" << hasSavedData << ")";
+}
+
 void StreamingPreferences::resetClientSettings(QString clientUuid)
 {
     if (clientUuid.isEmpty()) {
@@ -588,33 +647,48 @@ void StreamingPreferences::resetClientSettings(QString clientUuid)
     settings.beginGroup("clients");
     settings.remove(clientUuid);
     settings.endGroup();
+    settings.sync();
 
     if (m_CurrentClientUuid == clientUuid) {
         m_CurrentClientUuid.clear();
         reload(); // Reload global settings
     }
 
-    qInfo() << "Reset client-specific settings for UUID:" << clientUuid;
+    qInfo() << "Permanently deleted client-specific settings for UUID:" << clientUuid;
 }
 
 bool StreamingPreferences::hasClientSettings(QString clientUuid)
 {
     if (clientUuid.isEmpty()) {
-        qWarning() << "hasClientSettings called with empty UUID";
         return false;
     }
 
     QSettings settings;
     settings.beginGroup("clients/" + clientUuid);
     QStringList keys = settings.childKeys();
-    bool hasSettings = !keys.isEmpty();
+    keys.removeAll("_active");
+    bool hasData = !keys.isEmpty();
+    bool isActive = settings.value("_active", true).toBool();
     settings.endGroup();
 
-    qInfo() << "hasClientSettings for UUID:" << clientUuid
-            << "result:" << hasSettings
-            << "keys found:" << keys.count();
+    // Settings are "active" if data exists AND _active flag is true (default true for backward compat)
+    return hasData && isActive;
+}
 
-    return hasSettings;
+bool StreamingPreferences::hasSavedClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    QStringList keys = settings.childKeys();
+    keys.removeAll("_active");
+    bool hasData = !keys.isEmpty();
+    settings.endGroup();
+
+    return hasData;
 }
 
 QVariantMap StreamingPreferences::snapshotSettings() const
