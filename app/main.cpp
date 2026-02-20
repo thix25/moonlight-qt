@@ -435,6 +435,9 @@ int main(int argc, char *argv[])
 
 #ifdef LOG_TO_FILE
     QDir tempDir(Path::getLogDir());
+    if (!tempDir.exists()) {
+        tempDir.mkpath(".");
+    }
 
 #ifdef Q_OS_WIN32
     // Only log to a file if the user didn't redirect stderr somewhere else
