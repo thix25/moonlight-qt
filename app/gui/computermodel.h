@@ -59,6 +59,7 @@ public:
 
     // Convenience for QML
     Q_INVOKABLE int count() const { return m_Computers.count(); }
+    Q_INVOKABLE QString getSectionAt(int index) const;
 
 signals:
     void pairingCompleted(QVariant error);
