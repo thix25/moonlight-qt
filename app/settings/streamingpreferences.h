@@ -189,6 +189,8 @@ public:
     Q_PROPERTY(int pcTileScale MEMBER pcTileScale NOTIFY pcTileScaleChanged)
     Q_PROPERTY(bool pcShowSections MEMBER pcShowSections NOTIFY pcShowSectionsChanged)
     Q_PROPERTY(bool showPcInfo MEMBER showPcInfo NOTIFY showPcInfoChanged)
+    Q_PROPERTY(bool enablePassthrough MEMBER enablePassthrough NOTIFY enablePassthroughChanged)
+    Q_PROPERTY(int passthroughPort MEMBER passthroughPort NOTIFY passthroughPortChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -273,6 +275,8 @@ public:
     int pcTileScale;
     bool pcShowSections;
     bool showPcInfo;
+    bool enablePassthrough;
+    int passthroughPort;
 
 signals:
     void displayModeChanged();
@@ -317,6 +321,8 @@ signals:
     void pcTileScaleChanged();
     void pcShowSectionsChanged();
     void showPcInfoChanged();
+    void enablePassthroughChanged();
+    void passthroughPortChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

@@ -58,6 +58,8 @@
 #define SER_PCTILESCALE "pctilescale"
 #define SER_PCSHOWSECTIONS "pcshowsections"
 #define SER_SHOWPCINFO "showpcinfo"
+#define SER_ENABLEPASSTHROUGH "enablepassthrough"
+#define SER_PASSTHROUGHPORT "passthroughport"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -185,6 +187,8 @@ void StreamingPreferences::reload()
     pcTileScale = settings.value(SER_PCTILESCALE, 100).toInt();
     pcShowSections = settings.value(SER_PCSHOWSECTIONS, true).toBool();
     showPcInfo = settings.value(SER_SHOWPCINFO, false).toBool();
+    enablePassthrough = settings.value(SER_ENABLEPASSTHROUGH, false).toBool();
+    passthroughPort = settings.value(SER_PASSTHROUGHPORT, 47990).toInt();
 
 
     // Perform default settings updates as required based on last default version
@@ -390,6 +394,8 @@ void StreamingPreferences::save()
     settings.setValue(SER_PCTILESCALE, pcTileScale);
     settings.setValue(SER_PCSHOWSECTIONS, pcShowSections);
     settings.setValue(SER_SHOWPCINFO, showPcInfo);
+    settings.setValue(SER_ENABLEPASSTHROUGH, enablePassthrough);
+    settings.setValue(SER_PASSTHROUGHPORT, passthroughPort);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
@@ -501,6 +507,8 @@ void StreamingPreferences::loadForClient(QString clientUuid)
                                                   static_cast<int>(videoDecoderSelection)).toInt());
     windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
                                                         static_cast<int>(windowMode)).toInt());
+    enablePassthrough = settings.value(SER_ENABLEPASSTHROUGH, enablePassthrough).toBool();
+    passthroughPort = settings.value(SER_PASSTHROUGHPORT, passthroughPort).toInt();
 
     settings.endGroup();
 
@@ -558,6 +566,8 @@ void StreamingPreferences::saveForClient(QString clientUuid)
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_ENABLEPASSTHROUGH, enablePassthrough);
+    settings.setValue(SER_PASSTHROUGHPORT, passthroughPort);
 
     settings.endGroup();
 
@@ -731,6 +741,8 @@ QVariantMap StreamingPreferences::snapshotSettings() const
     map[QStringLiteral("captureSysKeysMode")] = static_cast<int>(captureSysKeysMode);
     map[QStringLiteral("uiDisplayMode")] = static_cast<int>(uiDisplayMode);
     map[QStringLiteral("language")] = static_cast<int>(language);
+    map[QStringLiteral("enablePassthrough")] = enablePassthrough;
+    map[QStringLiteral("passthroughPort")] = passthroughPort;
     return map;
 }
 
@@ -773,6 +785,8 @@ void StreamingPreferences::restoreSettings(const QVariantMap& map)
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(map.value(QStringLiteral("captureSysKeysMode"), static_cast<int>(captureSysKeysMode)).toInt());
     uiDisplayMode = static_cast<UIDisplayMode>(map.value(QStringLiteral("uiDisplayMode"), static_cast<int>(uiDisplayMode)).toInt());
     language = static_cast<Language>(map.value(QStringLiteral("language"), static_cast<int>(language)).toInt());
+    enablePassthrough = map.value(QStringLiteral("enablePassthrough"), enablePassthrough).toBool();
+    passthroughPort = map.value(QStringLiteral("passthroughPort"), passthroughPort).toInt();
 
     m_CurrentClientUuid.clear();
     emitAllChanged();
@@ -1062,6 +1076,8 @@ void StreamingPreferences::emitAllChanged()
     emit pcTileScaleChanged();
     emit pcShowSectionsChanged();
     emit showPcInfoChanged();
+    emit enablePassthroughChanged();
+    emit passthroughPortChanged();
 }
 
 // ---- Custom Order Management ----
