@@ -120,6 +120,14 @@ void SystemTray::stop()
     g_TrayInstance = nullptr;
 }
 
+void SystemTray::requestStop()
+{
+    m_Running = false;
+    if (m_Hwnd) {
+        PostMessageW(m_Hwnd, WM_CLOSE, 0, 0);
+    }
+}
+
 void SystemTray::setTooltip(const std::string& text)
 {
     std::wstring wtext(text.begin(), text.end());
@@ -178,6 +186,15 @@ void SystemTray::updateTooltip()
 
 LRESULT CALLBACK SystemTray::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    if (msg == WM_CLOSE) {
+        // Clean shutdown requested (from requestStop or system)
+        if (g_TrayInstance) {
+            g_TrayInstance->stop();
+        }
+        PostQuitMessage(0);
+        return 0;
+    }
+
     if (msg == WM_TRAYICON) {
         if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
             if (g_TrayInstance) {
@@ -207,8 +224,8 @@ LRESULT CALLBACK SystemTray::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 if (g_TrayInstance->m_ExitCallback) {
                     g_TrayInstance->m_ExitCallback();
                 }
-                g_TrayInstance->stop();
-                PostQuitMessage(0);
+                // Post WM_CLOSE which will trigger stop() + PostQuitMessage
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
             }
             break;
         }

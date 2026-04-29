@@ -22,8 +22,11 @@ public:
     // Run the message pump (blocks — call from dedicated thread or main thread)
     void run();
 
-    // Stop the message pump
+    // Stop the message pump (must be called from the window-owning thread)
     void stop();
+
+    // Thread-safe stop request (posts WM_CLOSE to the window)
+    void requestStop();
 
     // Update the tooltip text
     void setTooltip(const std::string& text);
