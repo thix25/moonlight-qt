@@ -2,6 +2,7 @@
 
 #include <QtDebug>
 #include <QRegularExpression>
+#include <QSettings>
 
 #ifdef Q_OS_WIN32
 #include <Windows.h>
@@ -111,6 +112,9 @@ void DeviceEnumerator::enumerate()
     enumerateUsb();
     enumerateBluetooth();
 
+    // Restore auto-forward flags from saved settings
+    loadAutoForwardList();
+
     endResetModel();
     emit devicesChanged();
 
@@ -137,6 +141,64 @@ void DeviceEnumerator::setAutoForward(int row, bool autoFwd)
     m_Devices[row].autoForward = autoFwd;
     QModelIndex idx = index(row);
     emit dataChanged(idx, idx, { AutoForwardRole });
+
+    saveAutoForwardList();
+}
+
+QString DeviceEnumerator::deviceFingerprint(const PassthroughDevice& dev)
+{
+    return QString("%1:%2:%3:%4")
+        .arg(dev.transport)
+        .arg(dev.vendorId, 4, 16, QLatin1Char('0'))
+        .arg(dev.productId, 4, 16, QLatin1Char('0'))
+        .arg(dev.serialNumber);
+}
+
+void DeviceEnumerator::saveAutoForwardList() const
+{
+    QSettings settings;
+    settings.beginGroup("Passthrough");
+
+    QStringList autoFwdList;
+    for (const auto& dev : m_Devices) {
+        if (dev.autoForward) {
+            autoFwdList.append(deviceFingerprint(dev));
+        }
+    }
+    settings.setValue("autoForwardDevices", autoFwdList);
+
+    settings.endGroup();
+}
+
+void DeviceEnumerator::loadAutoForwardList()
+{
+    QSettings settings;
+    settings.beginGroup("Passthrough");
+
+    QStringList autoFwdList = settings.value("autoForwardDevices").toStringList();
+    settings.endGroup();
+
+    if (autoFwdList.isEmpty()) return;
+
+    QSet<QString> fwdSet(autoFwdList.begin(), autoFwdList.end());
+
+    for (int i = 0; i < m_Devices.size(); i++) {
+        QString fp = deviceFingerprint(m_Devices[i]);
+        if (fwdSet.contains(fp)) {
+            m_Devices[i].autoForward = true;
+        }
+    }
+}
+
+QList<uint32_t> DeviceEnumerator::getAutoForwardDeviceIds() const
+{
+    QList<uint32_t> result;
+    for (const auto& dev : m_Devices) {
+        if (dev.autoForward) {
+            result.append(dev.deviceId);
+        }
+    }
+    return result;
 }
 
 // ─── Platform-specific enumeration ───

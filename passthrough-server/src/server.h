@@ -47,6 +47,13 @@ public:
     using LogCallback = std::function<void(const std::string&)>;
     void setLogCallback(LogCallback cb) { m_LogCallback = cb; }
 
+    // Status info for system tray
+    int getClientCount() const;
+    int getDeviceCount() const;
+
+    using StatusCallback = std::function<void(int clients, int devices)>;
+    void setStatusCallback(StatusCallback cb) { m_StatusCallback = cb; }
+
 private:
     void acceptLoop();
     void clientLoop(ClientConnection* client);
@@ -70,6 +77,7 @@ private:
                                 const uint8_t* nativeData, size_t nativeLen);
 
     void log(const std::string& msg);
+    void notifyStatusChange();
 
     SOCKET m_ListenSocket;
     std::thread m_AcceptThread;
@@ -86,4 +94,5 @@ private:
     VhciManager m_VhciManager;
 
     LogCallback m_LogCallback;
+    StatusCallback m_StatusCallback;
 };
