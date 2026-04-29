@@ -5,9 +5,12 @@
 #include <QTimer>
 #include <QByteArray>
 #include <QList>
+#include <QHash>
 
 #include "protocol.h"
 #include "deviceenumerator.h"
+
+class UsbIpExporter;
 
 class PassthroughClient : public QObject
 {
@@ -54,10 +57,16 @@ private:
     void sendMessage(MlptProtocol::MsgType type, const QByteArray& payload = QByteArray());
     void sendHello();
     void sendDeviceList();
+    void sendDeviceAttachWithDescriptors(uint32_t deviceId, UsbIpExporter* exporter);
     void processMessage(const MlptProtocol::Header& header, const QByteArray& payload);
+    void processUsbIpSubmit(const QByteArray& payload);
+    void processUsbIpUnlink(const QByteArray& payload);
 
     void setConnected(bool connected);
     void setStatusText(const QString& text);
+
+    void cleanupExporter(uint32_t deviceId);
+    void cleanupAllExporters();
 
     QTcpSocket m_Socket;
     QTimer m_KeepaliveTimer;
@@ -74,6 +83,9 @@ private:
     uint8_t m_SessionId[16];
 
     DeviceEnumerator m_DeviceEnumerator;
+
+    // Active device exporters: deviceId → UsbIpExporter*
+    QHash<uint32_t, UsbIpExporter*> m_Exporters;
 
     int m_ReconnectAttempts;
     static constexpr int MAX_RECONNECT_ATTEMPTS = 5;

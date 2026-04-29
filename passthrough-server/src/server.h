@@ -13,6 +13,7 @@
 #endif
 
 #include "protocol.h"
+#include "vhci_manager.h"
 
 struct ClientConnection {
     SOCKET socket;
@@ -59,6 +60,7 @@ private:
     void handleDeviceList(ClientConnection* client, const std::vector<uint8_t>& payload);
     void handleDeviceAttach(ClientConnection* client, const std::vector<uint8_t>& payload);
     void handleDeviceDetach(ClientConnection* client, const std::vector<uint8_t>& payload);
+    void handleUsbIpReturn(ClientConnection* client, const std::vector<uint8_t>& payload);
 
     void log(const std::string& msg);
 
@@ -69,6 +71,8 @@ private:
 
     std::mutex m_ClientsMutex;
     std::vector<std::unique_ptr<ClientConnection>> m_Clients;
+
+    VhciManager m_VhciManager;
 
     LogCallback m_LogCallback;
 };

@@ -18,6 +18,7 @@ PassthroughServer::~PassthroughServer()
 bool PassthroughServer::start(const ServerConfig& config)
 {
     m_Config = config;
+    m_Config.vhciAvailable = m_VhciManager.isDriverAvailable();
 
     // Create listening socket
     m_ListenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -221,6 +222,9 @@ void PassthroughServer::processMessage(ClientConnection* client,
     case MlptProtocol::MSG_DEVICE_DETACH:
         handleDeviceDetach(client, payload);
         break;
+    case MlptProtocol::MSG_USBIP_RETURN:
+        handleUsbIpReturn(client, payload);
+        break;
     case MlptProtocol::MSG_KEEPALIVE:
         sendMessage(client->socket, MlptProtocol::MSG_KEEPALIVE);
         break;
@@ -265,7 +269,7 @@ void PassthroughServer::handleDeviceList(ClientConnection* client,
     log("Device list from " + client->address + ": " +
         std::to_string(listHeader->count) + " devices");
 
-    // Parse device descriptors
+    // Parse device descriptors (new format with usbDescrDevLen/usbDescrConfLen)
     size_t offset = sizeof(MlptProtocol::DeviceListHeader);
     for (uint16_t i = 0; i < listHeader->count && offset < payload.size(); i++) {
         if (offset + sizeof(MlptProtocol::DeviceDescriptor) > payload.size()) break;
@@ -279,6 +283,10 @@ void PassthroughServer::handleDeviceList(ClientConnection* client,
             offset += desc->nameLen;
         }
 
+        // Skip USB descriptors if present (they're only meaningful in DEVICE_ATTACH)
+        offset += desc->usbDescrDevLen;
+        offset += desc->usbDescrConfLen;
+
         log("  Device " + std::to_string(desc->deviceId) + ": " + name +
             " [" + (desc->transport == MlptProtocol::TRANSPORT_USB ? "USB" : "BT") + "]" +
             " VID:" + std::to_string(desc->vendorId) +
@@ -289,27 +297,75 @@ void PassthroughServer::handleDeviceList(ClientConnection* client,
 void PassthroughServer::handleDeviceAttach(ClientConnection* client,
                                             const std::vector<uint8_t>& payload)
 {
-    if (payload.size() < sizeof(MlptProtocol::DeviceDetachPayload)) {
+    if (payload.size() < sizeof(MlptProtocol::DeviceDescriptor)) {
+        log("DEVICE_ATTACH too short from " + client->address);
         return;
     }
 
-    auto* req = reinterpret_cast<const MlptProtocol::DeviceDetachPayload*>(payload.data());
+    auto* desc = reinterpret_cast<const MlptProtocol::DeviceDescriptor*>(payload.data());
+    size_t offset = sizeof(MlptProtocol::DeviceDescriptor);
+
+    // Skip device name
+    std::string name;
+    if (desc->nameLen > 0 && offset + desc->nameLen <= payload.size()) {
+        name.assign(reinterpret_cast<const char*>(payload.data() + offset), desc->nameLen);
+        offset += desc->nameLen;
+    }
+
+    // Extract USB descriptors
+    const uint8_t* usbDevDescr = nullptr;
+    const uint8_t* usbConfDescr = nullptr;
+    size_t usbDevDescrLen = desc->usbDescrDevLen;
+    size_t usbConfDescrLen = desc->usbDescrConfLen;
+
+    if (usbDevDescrLen > 0 && offset + usbDevDescrLen <= payload.size()) {
+        usbDevDescr = payload.data() + offset;
+        offset += usbDevDescrLen;
+    }
+    if (usbConfDescrLen > 0 && offset + usbConfDescrLen <= payload.size()) {
+        usbConfDescr = payload.data() + offset;
+        offset += usbConfDescrLen;
+    }
+
     log("Device attach request from " + client->address +
-        " deviceId=" + std::to_string(req->deviceId));
+        " deviceId=" + std::to_string(desc->deviceId) +
+        " name=" + name +
+        " VID:" + std::to_string(desc->vendorId) +
+        " PID:" + std::to_string(desc->productId) +
+        " devDescr:" + std::to_string(usbDevDescrLen) +
+        " confDescr:" + std::to_string(usbConfDescrLen));
 
-    // TODO Phase 2: Actually create VHCI port and start USB/IP forwarding
-    // For now, send an ACK with the appropriate status
     MlptProtocol::DeviceAttachAckPayload ack{};
-    ack.deviceId = req->deviceId;
+    ack.deviceId = desc->deviceId;
 
-    if (m_Config.vhciAvailable) {
-        ack.status = MlptProtocol::ATTACH_OK;
-        ack.vhciPort = 1; // Placeholder
-        log("  -> Attached (VHCI port " + std::to_string(ack.vhciPort) + ")");
-    } else {
+    if (!m_VhciManager.isDriverAvailable()) {
         ack.status = MlptProtocol::ATTACH_ERR_DRIVER;
         ack.vhciPort = 0;
         log("  -> Failed: VHCI driver not available");
+    } else if (!usbDevDescr || !usbConfDescr) {
+        ack.status = MlptProtocol::ATTACH_ERR_FAILED;
+        ack.vhciPort = 0;
+        log("  -> Failed: missing USB descriptors");
+    } else {
+        // Extract serial from DeviceDescriptor
+        std::string serial(desc->serialNumber,
+            strnlen(desc->serialNumber, sizeof(desc->serialNumber)));
+
+        int port = m_VhciManager.attachDevice(
+            desc->deviceId, desc->vendorId, desc->productId,
+            usbDevDescr, usbDevDescrLen,
+            usbConfDescr, usbConfDescrLen,
+            serial);
+
+        if (port >= 0) {
+            ack.status = MlptProtocol::ATTACH_OK;
+            ack.vhciPort = static_cast<uint8_t>(port);
+            log("  -> Attached on VHCI port " + std::to_string(port));
+        } else {
+            ack.status = MlptProtocol::ATTACH_ERR_FAILED;
+            ack.vhciPort = 0;
+            log("  -> Failed: VHCI plugin failed");
+        }
     }
 
     sendMessage(client->socket, MlptProtocol::MSG_DEVICE_ATTACH_ACK, &ack, sizeof(ack));
@@ -326,7 +382,8 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
     log("Device detach request from " + client->address +
         " deviceId=" + std::to_string(req->deviceId));
 
-    // TODO Phase 2: Remove VHCI port and stop USB/IP forwarding
+    // Detach from VHCI
+    m_VhciManager.detachDevice(req->deviceId);
 
     // Send ACK
     MlptProtocol::DeviceDetachPayload ack{};
@@ -334,6 +391,25 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
     sendMessage(client->socket, MlptProtocol::MSG_DEVICE_DETACH_ACK, &ack, sizeof(ack));
 
     log("  -> Detached");
+}
+
+void PassthroughServer::handleUsbIpReturn(ClientConnection* client,
+                                           const std::vector<uint8_t>& payload)
+{
+    if (payload.size() < sizeof(MlptProtocol::UsbIpHeader)) {
+        return;
+    }
+
+    auto* urbHeader = reinterpret_cast<const MlptProtocol::UsbIpHeader*>(payload.data());
+
+    // The client is sending back a URB completion.
+    // In the full implementation, we would feed this back to the VHCI driver
+    // so the OS receives the USB response.
+    // For now, log it.
+    // TODO: Feed URB return to VHCI driver via DeviceIoControl
+
+    (void)urbHeader; // Suppress unused warning
+    // Future: m_VhciManager.feedUrbReturn(urbHeader, payload.data() + sizeof(*urbHeader), urbHeader->dataLen);
 }
 
 void PassthroughServer::log(const std::string& msg)
