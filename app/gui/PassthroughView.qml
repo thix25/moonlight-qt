@@ -101,7 +101,7 @@ Item {
                 font.pointSize: 12
                 font.bold: true
                 color: "#B0B0B0"
-                visible: usbRepeater.count > 0
+                visible: usbListView.count > 0
             }
 
             ListView {
@@ -109,16 +109,24 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredHeight: contentHeight
-                Layout.maximumHeight: parent.height * 0.4
+                Layout.maximumHeight: parent.height * 0.35
                 clip: true
                 spacing: 4
+                visible: count > 0
 
                 model: passthroughClient ? passthroughClient.deviceEnumerator : null
 
-                delegate: deviceDelegate
+                delegate: Loader {
+                    width: usbListView.width
+                    // Only show USB devices (transport === 1)
+                    active: transport === 1
+                    visible: active
+                    height: active ? item.height : 0
 
-                // Filter: USB only
-                // We show all devices and use section headers instead
+                    sourceComponent: deviceDelegate
+                    property int delegateIndex: index
+                    property var listViewRef: usbListView
+                }
             }
 
             // ─── Section: Bluetooth Devices ───
@@ -127,13 +135,47 @@ Item {
                 font.pointSize: 12
                 font.bold: true
                 color: "#B0B0B0"
-                visible: passthroughClient !== null
+                visible: btListView.count > 0
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Bluetooth HID devices (keyboards, mice) are forwarded as USB HID devices on the server. Non-HID Bluetooth devices are not supported.")
+                color: "#707070"
+                font.pointSize: 8
+                wrapMode: Text.WordWrap
+                visible: btListView.count > 0
+            }
+
+            ListView {
+                id: btListView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: contentHeight
+                Layout.maximumHeight: parent.height * 0.35
+                clip: true
+                spacing: 4
+                visible: count > 0
+
+                model: passthroughClient ? passthroughClient.deviceEnumerator : null
+
+                delegate: Loader {
+                    width: btListView.width
+                    // Only show Bluetooth devices (transport === 2)
+                    active: transport === 2
+                    visible: active
+                    height: active ? item.height : 0
+
+                    sourceComponent: deviceDelegate
+                    property int delegateIndex: index
+                    property var listViewRef: btListView
+                }
             }
 
             // ─── Hint text ───
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Toggle devices to forward them to the server. Forwarded USB devices will be detached from this PC and appear on the server as native hardware.")
+                text: qsTr("Toggle devices to forward them to the server. USB devices are forwarded natively. Bluetooth HID devices are presented as USB HID on the server.")
                 color: "#808080"
                 font.pointSize: 9
                 wrapMode: Text.WordWrap
@@ -145,7 +187,7 @@ Item {
         id: deviceDelegate
 
         Rectangle {
-            width: usbListView.width
+            width: parent ? parent.width : 100
             height: deviceRow.implicitHeight + 12
             color: isForwarding ? "#1A4CAF50" : "#1AFFFFFF"
             radius: 4
@@ -220,6 +262,15 @@ Item {
                             color: batteryPercent > 20 ? "#4CAF50" : "#FF5252"
                             visible: text !== ""
                         }
+
+                        Label {
+                            text: transport === 2
+                                  ? (btConnected ? qsTr("Connected") : qsTr("Disconnected"))
+                                  : ""
+                            font.pointSize: 9
+                            color: btConnected ? "#4CAF50" : "#FF5252"
+                            visible: text !== ""
+                        }
                     }
                 }
 
@@ -249,6 +300,8 @@ Item {
                 Switch {
                     checked: isForwarding
                     enabled: passthroughClient && passthroughClient.connected && passthroughClient.vhciAvailable
+                             && (transport !== 2 || btConnected)
+                             && (transport !== 2 || deviceClass === 1 || deviceClass === 2 || deviceClass === 3 || deviceClass === 4)
                     onClicked: {
                         if (passthroughClient) {
                             if (!checked) {

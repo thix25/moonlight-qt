@@ -11,6 +11,7 @@
 #include "deviceenumerator.h"
 
 class UsbIpExporter;
+class BtHidCapture;
 
 class PassthroughClient : public QObject
 {
@@ -58,6 +59,7 @@ private:
     void sendHello();
     void sendDeviceList();
     void sendDeviceAttachWithDescriptors(uint32_t deviceId, UsbIpExporter* exporter);
+    void sendDeviceAttachWithDescriptors(uint32_t deviceId, BtHidCapture* capture);
     void processMessage(const MlptProtocol::Header& header, const QByteArray& payload);
     void processUsbIpSubmit(const QByteArray& payload);
     void processUsbIpUnlink(const QByteArray& payload);
@@ -67,6 +69,8 @@ private:
 
     void cleanupExporter(uint32_t deviceId);
     void cleanupAllExporters();
+    void cleanupBtCapture(uint32_t deviceId);
+    void cleanupAllBtCaptures();
 
     QTcpSocket m_Socket;
     QTimer m_KeepaliveTimer;
@@ -86,6 +90,9 @@ private:
 
     // Active device exporters: deviceId → UsbIpExporter*
     QHash<uint32_t, UsbIpExporter*> m_Exporters;
+
+    // Active BT HID captures: deviceId → BtHidCapture*
+    QHash<uint32_t, BtHidCapture*> m_BtCaptures;
 
     int m_ReconnectAttempts;
     static constexpr int MAX_RECONNECT_ATTEMPTS = 5;

@@ -11,9 +11,12 @@
 #include <initguid.h>
 #include <usbiodef.h>
 #include <BluetoothAPIs.h>
+#include <hidsdi.h>
+#include <devpkey.h>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "bthprops.lib")
+#pragma comment(lib, "hid.lib")
 #endif
 
 DeviceEnumerator::DeviceEnumerator(QObject* parent)
@@ -265,6 +268,73 @@ void DeviceEnumerator::enumerateUsb()
     SetupDiDestroyDeviceInfoList(devInfo);
 }
 
+// Try to find HID VID/PID for a Bluetooth device by its address
+static void findBtHidVidPid(const QString& btAddrClean, uint16_t& outVid, uint16_t& outPid)
+{
+    GUID hidGuid;
+    HidD_GetHidGuid(&hidGuid);
+
+    HDEVINFO devInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr,
+                                             DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devInfo == INVALID_HANDLE_VALUE) return;
+
+    SP_DEVICE_INTERFACE_DATA ifData = {};
+    ifData.cbSize = sizeof(ifData);
+
+    for (DWORD i = 0; SetupDiEnumDeviceInterfaces(devInfo, nullptr, &hidGuid, i, &ifData); i++) {
+        DWORD reqSize = 0;
+        SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, nullptr, 0, &reqSize, nullptr);
+
+        auto* detail = static_cast<PSP_DEVICE_INTERFACE_DETAIL_DATA_W>(malloc(reqSize));
+        if (!detail) continue;
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+        SP_DEVINFO_DATA devInfoData = {};
+        devInfoData.cbSize = sizeof(devInfoData);
+
+        if (SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, detail, reqSize, nullptr, &devInfoData)) {
+            // Check instance path or parent for BT address
+            WCHAR instanceId[MAX_DEVICE_ID_LEN];
+            bool found = false;
+            if (CM_Get_Device_IDW(devInfoData.DevInst, instanceId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS) {
+                if (QString::fromWCharArray(instanceId).toUpper().contains(btAddrClean))
+                    found = true;
+            }
+            if (!found) {
+                DEVINST parentInst;
+                if (CM_Get_Parent(&parentInst, devInfoData.DevInst, 0) == CR_SUCCESS) {
+                    WCHAR parentId[MAX_DEVICE_ID_LEN];
+                    if (CM_Get_Device_IDW(parentInst, parentId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS) {
+                        if (QString::fromWCharArray(parentId).toUpper().contains(btAddrClean))
+                            found = true;
+                    }
+                }
+            }
+
+            if (found) {
+                // Open HID device to get attributes
+                HANDLE hTest = CreateFileW(detail->DevicePath,
+                    GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    nullptr, OPEN_EXISTING, 0, nullptr);
+                if (hTest != INVALID_HANDLE_VALUE) {
+                    HIDD_ATTRIBUTES attrs = {};
+                    attrs.Size = sizeof(attrs);
+                    if (HidD_GetAttributes(hTest, &attrs)) {
+                        outVid = attrs.VendorID;
+                        outPid = attrs.ProductID;
+                    }
+                    CloseHandle(hTest);
+                }
+                free(detail);
+                break;
+            }
+        }
+        free(detail);
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfo);
+}
+
 void DeviceEnumerator::enumerateBluetooth()
 {
     BLUETOOTH_DEVICE_SEARCH_PARAMS searchParams;
@@ -289,8 +359,6 @@ void DeviceEnumerator::enumerateBluetooth()
     do {
         PassthroughDevice dev;
         dev.deviceId = m_NextDeviceId++;
-        dev.vendorId = 0;  // BT doesn't use VID/PID in the same way
-        dev.productId = 0;
         dev.name = QString::fromWCharArray(deviceInfo.szName);
         dev.serialNumber = QString("%1:%2:%3:%4:%5:%6")
             .arg(deviceInfo.Address.rgBytes[5], 2, 16, QLatin1Char('0'))
@@ -303,10 +371,17 @@ void DeviceEnumerator::enumerateBluetooth()
         dev.transport = MlptProtocol::TRANSPORT_BLUETOOTH;
         dev.isForwarding = false;
         dev.autoForward = false;
-        dev.batteryPercent = -1;  // TODO Phase 3: query GATT Battery Service
-        dev.rssi = 0;            // TODO Phase 3: query RSSI
         dev.btPaired = deviceInfo.fAuthenticated;
         dev.btConnected = deviceInfo.fConnected;
+        dev.rssi = 0;
+
+        // Try to get VID/PID from HID device associated with this BT device
+        dev.vendorId = 0;
+        dev.productId = 0;
+        QString btAddrClean = dev.serialNumber.toUpper().remove(':');
+        if (deviceInfo.fConnected) {
+            findBtHidVidPid(btAddrClean, dev.vendorId, dev.productId);
+        }
 
         // Classify by CoD (Class of Device)
         ULONG cod = deviceInfo.ulClassofDevice;
@@ -332,6 +407,62 @@ void DeviceEnumerator::enumerateBluetooth()
         default:
             dev.deviceClass = MlptProtocol::DEVCLASS_OTHER;
             break;
+        }
+
+        // Try to get battery level from the BT device registry
+        // Windows stores battery info in the device node properties
+        dev.batteryPercent = -1;
+        if (deviceInfo.fConnected) {
+            // Search for battery info via DEVPKEY_Bluetooth_Battery
+            // The HID device node often has a "BatteryLevel" registry value
+            GUID hidGuid;
+            HidD_GetHidGuid(&hidGuid);
+
+            HDEVINFO hidDevInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr,
+                                                        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+            if (hidDevInfo != INVALID_HANDLE_VALUE) {
+                SP_DEVICE_INTERFACE_DATA ifData = {};
+                ifData.cbSize = sizeof(ifData);
+
+                for (DWORD j = 0; SetupDiEnumDeviceInterfaces(hidDevInfo, nullptr, &hidGuid, j, &ifData); j++) {
+                    SP_DEVINFO_DATA hidInfoData = {};
+                    hidInfoData.cbSize = sizeof(hidInfoData);
+                    DWORD reqSize = 0;
+                    SetupDiGetDeviceInterfaceDetailW(hidDevInfo, &ifData, nullptr, 0, &reqSize, nullptr);
+
+                    auto* detail = static_cast<PSP_DEVICE_INTERFACE_DETAIL_DATA_W>(malloc(reqSize));
+                    if (!detail) continue;
+                    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+                    if (SetupDiGetDeviceInterfaceDetailW(hidDevInfo, &ifData, detail, reqSize, nullptr, &hidInfoData)) {
+                        WCHAR instanceId[MAX_DEVICE_ID_LEN];
+                        if (CM_Get_Device_IDW(hidInfoData.DevInst, instanceId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS) {
+                            QString instPath = QString::fromWCharArray(instanceId).toUpper();
+                            if (instPath.contains(btAddrClean)) {
+                                // Found HID device for this BT device. Check for battery in registry.
+                                HKEY devRegKey = SetupDiOpenDevRegKey(hidDevInfo, &hidInfoData,
+                                                                      DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+                                if (devRegKey != INVALID_HANDLE_VALUE) {
+                                    DWORD batteryLevel = 0;
+                                    DWORD size = sizeof(batteryLevel);
+                                    DWORD type = 0;
+                                    if (RegQueryValueExW(devRegKey, L"BatteryLevel", nullptr, &type,
+                                                         reinterpret_cast<LPBYTE>(&batteryLevel), &size) == ERROR_SUCCESS) {
+                                        if (type == REG_DWORD && batteryLevel <= 100) {
+                                            dev.batteryPercent = static_cast<int8_t>(batteryLevel);
+                                        }
+                                    }
+                                    RegCloseKey(devRegKey);
+                                }
+                                free(detail);
+                                break;
+                            }
+                        }
+                    }
+                    free(detail);
+                }
+                SetupDiDestroyDeviceInfoList(hidDevInfo);
+            }
         }
 
         m_Devices.append(dev);
