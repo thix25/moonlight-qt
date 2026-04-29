@@ -2,6 +2,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
+#include "passthrough/passthroughclient.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -586,7 +587,8 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_OpusDecoder(nullptr),
       m_AudioRenderer(nullptr),
       m_AudioSampleCount(0),
-      m_DropAudioEndTime(0)
+      m_DropAudioEndTime(0),
+      m_PassthroughClient(nullptr)
 {
     // If we don't have custom preferences and client has specific settings, load them
     if (!preferences && m_Computer && m_Preferences->hasClientSettings(m_Computer->uuid)) {
@@ -609,6 +611,11 @@ Session::~Session()
     // Use Session::exec() or DeferredSessionCleanupTask instead.
 
     SDL_DestroyMutex(m_DecoderLock);
+}
+
+QObject* Session::passthroughClient() const
+{
+    return m_PassthroughClient;
 }
 
 bool Session::initialize(QQuickWindow* qtWindow)
@@ -1297,6 +1304,11 @@ private:
         SDL_assert(m_Session->m_VideoDecoder == nullptr);
 
         // Finish cleanup of the connection state
+        if (m_Session->m_PassthroughClient) {
+            m_Session->m_PassthroughClient->disconnectFromServer();
+            delete m_Session->m_PassthroughClient;
+            m_Session->m_PassthroughClient = nullptr;
+        }
         LiStopConnection();
 
         // Perform a best-effort app quit
@@ -1706,6 +1718,18 @@ bool Session::startConnectionAsync()
     }
 
     emit connectionStarted();
+
+    // Start passthrough client if enabled
+    if (m_Preferences->enablePassthrough && m_Computer) {
+        m_PassthroughClient = new PassthroughClient(this);
+        m_PassthroughClient->connectToServer(
+            m_Computer->activeAddress.address(),
+            static_cast<uint16_t>(m_Preferences->passthroughPort));
+        qInfo() << "Passthrough client started, connecting to"
+                << m_Computer->activeAddress.address()
+                << ":" << m_Preferences->passthroughPort;
+    }
+
     return true;
 }
 

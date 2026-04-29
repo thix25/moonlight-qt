@@ -20,5 +20,6 @@
         <file>gui/ClientSettingsDialog.qml</file>
         <file>gui/CenteredGridView.qml</file>
         <file>gui/CliPair.qml</file>
+        <file>gui/PassthroughView.qml</file>
     </qresource>
 </RCC>

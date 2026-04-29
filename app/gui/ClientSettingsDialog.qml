@@ -226,6 +226,10 @@ NavigableDialog {
         enableMdnsCheckbox.checked = StreamingPreferences.enableMdns
         detectNetworkBlockingCheckbox.checked = StreamingPreferences.detectNetworkBlocking
         showPerformanceOverlayCheckbox.checked = StreamingPreferences.showPerformanceOverlay
+        
+        // Passthrough settings
+        enablePassthroughCheckbox.checked = StreamingPreferences.enablePassthrough
+        passthroughPortField.text = StreamingPreferences.passthroughPort.toString()
     }
     
     function updatePreferencesFromUI() {
@@ -278,6 +282,10 @@ NavigableDialog {
         StreamingPreferences.enableMdns = enableMdnsCheckbox.checked
         StreamingPreferences.detectNetworkBlocking = detectNetworkBlockingCheckbox.checked
         StreamingPreferences.showPerformanceOverlay = showPerformanceOverlayCheckbox.checked
+        
+        // Passthrough settings
+        StreamingPreferences.enablePassthrough = enablePassthroughCheckbox.checked
+        StreamingPreferences.passthroughPort = parseInt(passthroughPortField.text) || 47990
     }
     
     contentItem: Flickable {
@@ -1115,6 +1123,51 @@ NavigableDialog {
                             id: showPerformanceOverlayCheckbox
                             text: qsTr("Show performance stats while streaming")
                             font.pointSize: 12
+                        }
+                    }
+                }
+
+                // Device Passthrough
+                GroupBox {
+                    Layout.fillWidth: true
+                    title: qsTr("Device Passthrough")
+                    font.pointSize: 12
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 5
+
+                        CheckBox {
+                            id: enablePassthroughCheckbox
+                            text: qsTr("Enable USB/Bluetooth device passthrough")
+                            font.pointSize: 12
+                        }
+
+                        RowLayout {
+                            spacing: 10
+                            enabled: enablePassthroughCheckbox.checked
+
+                            Label {
+                                text: qsTr("Server port:")
+                                font.pointSize: 12
+                            }
+
+                            TextField {
+                                id: passthroughPortField
+                                text: "47990"
+                                font.pointSize: 12
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                Layout.preferredWidth: 80
+                                validator: IntValidator { bottom: 1024; top: 65535 }
+                            }
+                        }
+
+                        Label {
+                            text: qsTr("Requires the companion server (mlpt-server) running on the host PC alongside Sunshine.")
+                            font.pointSize: 10
+                            color: "gray"
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
                         }
                     }
                 }

@@ -1,0 +1,354 @@
+#include "deviceenumerator.h"
+
+#include <QtDebug>
+#include <QRegularExpression>
+
+#ifdef Q_OS_WIN32
+#include <Windows.h>
+#include <SetupAPI.h>
+#include <devguid.h>
+#include <cfgmgr32.h>
+#include <initguid.h>
+#include <usbiodef.h>
+#include <BluetoothAPIs.h>
+
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "bthprops.lib")
+#endif
+
+DeviceEnumerator::DeviceEnumerator(QObject* parent)
+    : QAbstractListModel(parent)
+    , m_NextDeviceId(1)
+{
+}
+
+int DeviceEnumerator::rowCount(const QModelIndex& parent) const
+{
+    Q_UNUSED(parent);
+    return m_Devices.size();
+}
+
+QVariant DeviceEnumerator::data(const QModelIndex& index, int role) const
+{
+    if (!index.isValid() || index.row() >= m_Devices.size())
+        return QVariant();
+
+    const auto& dev = m_Devices[index.row()];
+
+    switch (role) {
+    case DeviceIdRole:       return dev.deviceId;
+    case NameRole:           return dev.name;
+    case VendorIdRole:       return dev.vendorId;
+    case ProductIdRole:      return dev.productId;
+    case TransportRole:      return dev.transport;
+    case DeviceClassRole:    return dev.deviceClass;
+    case SerialNumberRole:   return dev.serialNumber;
+    case IsForwardingRole:   return dev.isForwarding;
+    case AutoForwardRole:    return dev.autoForward;
+    case BatteryPercentRole: return dev.batteryPercent;
+    case RssiRole:           return dev.rssi;
+    case BtPairedRole:       return dev.btPaired;
+    case BtConnectedRole:    return dev.btConnected;
+    case StatusTextRole: {
+        if (dev.isForwarding)
+            return tr("Forwarding");
+        return tr("Available");
+    }
+    case DeviceClassNameRole: {
+        switch (dev.deviceClass) {
+        case MlptProtocol::DEVCLASS_HID_KEYBOARD: return tr("Keyboard");
+        case MlptProtocol::DEVCLASS_HID_MOUSE:    return tr("Mouse");
+        case MlptProtocol::DEVCLASS_HID_GAMEPAD:  return tr("Gamepad");
+        case MlptProtocol::DEVCLASS_HID_OTHER:    return tr("HID Device");
+        case MlptProtocol::DEVCLASS_STORAGE:       return tr("Storage");
+        case MlptProtocol::DEVCLASS_AUDIO:         return tr("Audio");
+        case MlptProtocol::DEVCLASS_VIDEO:         return tr("Webcam");
+        case MlptProtocol::DEVCLASS_BT_ADAPTER:    return tr("Bluetooth Adapter");
+        default:                                    return tr("USB Device");
+        }
+    }
+    case VidPidTextRole:
+        return QString("%1:%2")
+            .arg(dev.vendorId, 4, 16, QLatin1Char('0'))
+            .arg(dev.productId, 4, 16, QLatin1Char('0'));
+    default:
+        return QVariant();
+    }
+}
+
+QHash<int, QByteArray> DeviceEnumerator::roleNames() const
+{
+    return {
+        { DeviceIdRole,       "deviceId" },
+        { NameRole,           "deviceName" },
+        { VendorIdRole,       "vendorId" },
+        { ProductIdRole,      "productId" },
+        { TransportRole,      "transport" },
+        { DeviceClassRole,    "deviceClass" },
+        { SerialNumberRole,   "serialNumber" },
+        { IsForwardingRole,   "isForwarding" },
+        { AutoForwardRole,    "autoForward" },
+        { StatusTextRole,     "statusText" },
+        { DeviceClassNameRole,"deviceClassName" },
+        { VidPidTextRole,     "vidPidText" },
+        { BatteryPercentRole, "batteryPercent" },
+        { RssiRole,           "rssi" },
+        { BtPairedRole,       "btPaired" },
+        { BtConnectedRole,    "btConnected" },
+    };
+}
+
+void DeviceEnumerator::enumerate()
+{
+    beginResetModel();
+    m_Devices.clear();
+    m_NextDeviceId = 1;
+
+    enumerateUsb();
+    enumerateBluetooth();
+
+    endResetModel();
+    emit devicesChanged();
+
+    qInfo() << "Passthrough: enumerated" << m_Devices.size() << "devices"
+            << "(USB + Bluetooth)";
+}
+
+void DeviceEnumerator::setDeviceForwarding(uint32_t deviceId, bool forwarding)
+{
+    for (int i = 0; i < m_Devices.size(); i++) {
+        if (m_Devices[i].deviceId == deviceId) {
+            m_Devices[i].isForwarding = forwarding;
+            QModelIndex idx = index(i);
+            emit dataChanged(idx, idx, { IsForwardingRole, StatusTextRole });
+            return;
+        }
+    }
+}
+
+void DeviceEnumerator::setAutoForward(int row, bool autoFwd)
+{
+    if (row < 0 || row >= m_Devices.size()) return;
+
+    m_Devices[row].autoForward = autoFwd;
+    QModelIndex idx = index(row);
+    emit dataChanged(idx, idx, { AutoForwardRole });
+}
+
+// ─── Platform-specific enumeration ───
+
+#ifdef Q_OS_WIN32
+
+static uint8_t classifyUsbDevice(const QString& deviceClass, const QString& compatIds)
+{
+    QString cls = deviceClass.toUpper();
+
+    if (cls == "BLUETOOTHDEVICE" || cls == "BLUETOOTH")
+        return MlptProtocol::DEVCLASS_BT_ADAPTER;
+    if (cls == "DISKDRIVE" || cls == "CDROM" || cls == "USBSTOR" || cls == "WPD")
+        return MlptProtocol::DEVCLASS_STORAGE;
+    if (cls == "CAMERA" || cls == "IMAGE")
+        return MlptProtocol::DEVCLASS_VIDEO;
+    if (cls == "MEDIA" || cls == "AUDIOINPUT" || cls == "AUDIOOUTPUT")
+        return MlptProtocol::DEVCLASS_AUDIO;
+
+    // Check HID subtype via compatible IDs
+    QString compat = compatIds.toUpper();
+    if (compat.contains("HID_DEVICE_SYSTEM_KEYBOARD") || compat.contains("KEYBOARD"))
+        return MlptProtocol::DEVCLASS_HID_KEYBOARD;
+    if (compat.contains("HID_DEVICE_SYSTEM_MOUSE") || compat.contains("MOUSE"))
+        return MlptProtocol::DEVCLASS_HID_MOUSE;
+    if (compat.contains("HID_DEVICE_SYSTEM_GAME") || compat.contains("GAMEPAD") || compat.contains("JOYSTICK"))
+        return MlptProtocol::DEVCLASS_HID_GAMEPAD;
+    if (cls == "HIDCLASS" || cls == "HID")
+        return MlptProtocol::DEVCLASS_HID_OTHER;
+
+    return MlptProtocol::DEVCLASS_OTHER;
+}
+
+static QString getDeviceRegistryProperty(HDEVINFO devInfo, SP_DEVINFO_DATA* devInfoData, DWORD property)
+{
+    DWORD bufSize = 0;
+    SetupDiGetDeviceRegistryPropertyW(devInfo, devInfoData, property, nullptr, nullptr, 0, &bufSize);
+    if (bufSize == 0) return QString();
+
+    QByteArray buf(bufSize, 0);
+    if (!SetupDiGetDeviceRegistryPropertyW(devInfo, devInfoData, property, nullptr,
+                                           reinterpret_cast<PBYTE>(buf.data()), bufSize, nullptr)) {
+        return QString();
+    }
+
+    // Handle REG_MULTI_SZ (multiple null-terminated strings)
+    return QString::fromWCharArray(reinterpret_cast<const wchar_t*>(buf.constData()));
+}
+
+void DeviceEnumerator::enumerateUsb()
+{
+    HDEVINFO devInfo = SetupDiGetClassDevsW(nullptr, L"USB", nullptr,
+                                             DIGCF_ALLCLASSES | DIGCF_PRESENT);
+    if (devInfo == INVALID_HANDLE_VALUE) {
+        qWarning() << "Passthrough: SetupDiGetClassDevs failed:" << GetLastError();
+        return;
+    }
+
+    SP_DEVINFO_DATA devInfoData;
+    devInfoData.cbSize = sizeof(devInfoData);
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(devInfo, i, &devInfoData); i++) {
+        // Get instance path
+        WCHAR instanceId[MAX_DEVICE_ID_LEN];
+        if (CM_Get_Device_IDW(devInfoData.DevInst, instanceId, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS)
+            continue;
+
+        QString instancePath = QString::fromWCharArray(instanceId);
+
+        // Skip USB hubs and root hubs
+        if (instancePath.toUpper().contains("ROOT_HUB") ||
+            instancePath.toUpper().contains("USB\\ROOT"))
+            continue;
+
+        // Parse VID/PID from instance path: USB\VID_xxxx&PID_xxxx\...
+        uint16_t vid = 0, pid = 0;
+        QRegularExpression vidPidRe("VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})");
+        auto match = vidPidRe.match(instancePath);
+        if (match.hasMatch()) {
+            vid = match.captured(1).toUShort(nullptr, 16);
+            pid = match.captured(2).toUShort(nullptr, 16);
+        } else {
+            continue; // Not a real USB device (hub controller, etc.)
+        }
+
+        // Get friendly name
+        QString friendlyName = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_FRIENDLYNAME);
+        if (friendlyName.isEmpty()) {
+            friendlyName = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_DEVICEDESC);
+        }
+        if (friendlyName.isEmpty()) {
+            friendlyName = QString("USB Device %1:%2")
+                .arg(vid, 4, 16, QLatin1Char('0'))
+                .arg(pid, 4, 16, QLatin1Char('0'));
+        }
+
+        // Get device class and compatible IDs for classification
+        QString deviceClass = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_CLASS);
+        QString compatIds = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_COMPATIBLEIDS);
+
+        // Extract serial from instance path (3rd segment after \\)
+        QString serial;
+        QStringList pathParts = instancePath.split('\\');
+        if (pathParts.size() >= 3) {
+            serial = pathParts[2];
+            // Skip auto-generated serials (contain & which means composite)
+            if (serial.contains('&')) serial.clear();
+        }
+
+        PassthroughDevice dev;
+        dev.deviceId = m_NextDeviceId++;
+        dev.vendorId = vid;
+        dev.productId = pid;
+        dev.name = friendlyName;
+        dev.serialNumber = serial;
+        dev.instancePath = instancePath;
+        dev.transport = MlptProtocol::TRANSPORT_USB;
+        dev.deviceClass = classifyUsbDevice(deviceClass, compatIds);
+        dev.isForwarding = false;
+        dev.autoForward = false;
+        dev.batteryPercent = -1;
+        dev.rssi = 0;
+        dev.btPaired = false;
+        dev.btConnected = false;
+
+        m_Devices.append(dev);
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfo);
+}
+
+void DeviceEnumerator::enumerateBluetooth()
+{
+    BLUETOOTH_DEVICE_SEARCH_PARAMS searchParams;
+    memset(&searchParams, 0, sizeof(searchParams));
+    searchParams.dwSize = sizeof(searchParams);
+    searchParams.fReturnAuthenticated = TRUE;
+    searchParams.fReturnRemembered = TRUE;
+    searchParams.fReturnConnected = TRUE;
+    searchParams.fReturnUnknown = TRUE;
+    searchParams.fIssueInquiry = FALSE;  // Don't do active scan, just list known devices
+    searchParams.cTimeoutMultiplier = 0;
+
+    BLUETOOTH_DEVICE_INFO deviceInfo;
+    deviceInfo.dwSize = sizeof(deviceInfo);
+
+    HBLUETOOTH_DEVICE_FIND hFind = BluetoothFindFirstDevice(&searchParams, &deviceInfo);
+    if (hFind == nullptr) {
+        // No BT devices or BT not available - this is normal
+        return;
+    }
+
+    do {
+        PassthroughDevice dev;
+        dev.deviceId = m_NextDeviceId++;
+        dev.vendorId = 0;  // BT doesn't use VID/PID in the same way
+        dev.productId = 0;
+        dev.name = QString::fromWCharArray(deviceInfo.szName);
+        dev.serialNumber = QString("%1:%2:%3:%4:%5:%6")
+            .arg(deviceInfo.Address.rgBytes[5], 2, 16, QLatin1Char('0'))
+            .arg(deviceInfo.Address.rgBytes[4], 2, 16, QLatin1Char('0'))
+            .arg(deviceInfo.Address.rgBytes[3], 2, 16, QLatin1Char('0'))
+            .arg(deviceInfo.Address.rgBytes[2], 2, 16, QLatin1Char('0'))
+            .arg(deviceInfo.Address.rgBytes[1], 2, 16, QLatin1Char('0'))
+            .arg(deviceInfo.Address.rgBytes[0], 2, 16, QLatin1Char('0'));
+        dev.instancePath.clear();
+        dev.transport = MlptProtocol::TRANSPORT_BLUETOOTH;
+        dev.isForwarding = false;
+        dev.autoForward = false;
+        dev.batteryPercent = -1;  // TODO Phase 3: query GATT Battery Service
+        dev.rssi = 0;            // TODO Phase 3: query RSSI
+        dev.btPaired = deviceInfo.fAuthenticated;
+        dev.btConnected = deviceInfo.fConnected;
+
+        // Classify by CoD (Class of Device)
+        ULONG cod = deviceInfo.ulClassofDevice;
+        uint8_t majorClass = (cod >> 8) & 0x1F;
+        uint8_t minorClass = (cod >> 2) & 0x3F;
+
+        switch (majorClass) {
+        case 0x05: // Peripheral
+            if (minorClass & 0x10) // Keyboard
+                dev.deviceClass = MlptProtocol::DEVCLASS_HID_KEYBOARD;
+            else if (minorClass & 0x20) // Pointing device (mouse)
+                dev.deviceClass = MlptProtocol::DEVCLASS_HID_MOUSE;
+            else if (minorClass & 0x08) // Gamepad
+                dev.deviceClass = MlptProtocol::DEVCLASS_HID_GAMEPAD;
+            else if (minorClass & 0x04) // Joystick
+                dev.deviceClass = MlptProtocol::DEVCLASS_HID_GAMEPAD;
+            else
+                dev.deviceClass = MlptProtocol::DEVCLASS_HID_OTHER;
+            break;
+        case 0x04: // Audio/Video
+            dev.deviceClass = MlptProtocol::DEVCLASS_AUDIO;
+            break;
+        default:
+            dev.deviceClass = MlptProtocol::DEVCLASS_OTHER;
+            break;
+        }
+
+        m_Devices.append(dev);
+
+    } while (BluetoothFindNextDevice(hFind, &deviceInfo));
+
+    BluetoothFindDeviceClose(hFind);
+}
+
+#else
+// Non-Windows stubs
+void DeviceEnumerator::enumerateUsb()
+{
+    qInfo() << "Passthrough: USB enumeration not implemented on this platform";
+}
+
+void DeviceEnumerator::enumerateBluetooth()
+{
+    qInfo() << "Passthrough: Bluetooth enumeration not implemented on this platform";
+}
+#endif
