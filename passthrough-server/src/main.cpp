@@ -10,6 +10,8 @@
 #ifdef _WIN32
 #include <WinSock2.h>
 #pragma comment(lib, "ws2_32.lib")
+#else
+#include <unistd.h>
 #endif
 
 #include "server.h"

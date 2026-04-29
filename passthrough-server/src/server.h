@@ -84,11 +84,11 @@ private:
     std::atomic<bool> m_Running;
     ServerConfig m_Config;
 
-    std::mutex m_ClientsMutex;
+    mutable std::mutex m_ClientsMutex;
     std::vector<std::unique_ptr<ClientConnection>> m_Clients;
 
     // Maps deviceId -> ClientConnection* that owns it
-    std::mutex m_DeviceOwnersMutex;
+    mutable std::mutex m_DeviceOwnersMutex;
     std::unordered_map<uint32_t, ClientConnection*> m_DeviceOwners;
 
     VhciManager m_VhciManager;

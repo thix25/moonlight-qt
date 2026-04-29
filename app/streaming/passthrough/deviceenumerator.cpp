@@ -584,10 +584,11 @@ void DeviceEnumerator::pollHotplug()
         autoForwardState.insert(fp, dev.autoForward);
     }
 
-    // Re-enumerate
+    // Re-enumerate (keep m_NextDeviceId monotonically increasing to avoid ID collisions)
+    uint32_t savedNextId = m_NextDeviceId;
     beginResetModel();
     m_Devices.clear();
-    m_NextDeviceId = 1; // Reset to allow stable ID reuse
+    m_NextDeviceId = 1; // Temporary IDs for matching
     enumerateUsb();
     enumerateBluetooth();
     endResetModel();
@@ -605,6 +606,23 @@ void DeviceEnumerator::pollHotplug()
             dev.deviceId = oldIdMap[fp]; // Keep stable ID
             dev.isForwarding = forwardingState.value(fp, false);
             dev.autoForward = autoForwardState.value(fp, false);
+        }
+    }
+
+    // Fix device ID collisions: collect all used IDs, then reassign duplicates
+    QSet<uint32_t> usedIds;
+    m_NextDeviceId = savedNextId;
+    for (auto& dev : m_Devices) {
+        if (usedIds.contains(dev.deviceId)) {
+            // Collision — assign a fresh ID
+            dev.deviceId = m_NextDeviceId++;
+        }
+        usedIds.insert(dev.deviceId);
+    }
+    // Ensure m_NextDeviceId is above all used IDs
+    for (uint32_t id : usedIds) {
+        if (id >= m_NextDeviceId) {
+            m_NextDeviceId = id + 1;
         }
     }
 
