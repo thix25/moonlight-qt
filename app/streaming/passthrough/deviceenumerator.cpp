@@ -20,6 +20,7 @@ DeviceEnumerator::DeviceEnumerator(QObject* parent)
     : QAbstractListModel(parent)
     , m_NextDeviceId(1)
 {
+    connect(&m_HotplugTimer, &QTimer::timeout, this, &DeviceEnumerator::pollHotplug);
 }
 
 int DeviceEnumerator::rowCount(const QModelIndex& parent) const
@@ -352,3 +353,94 @@ void DeviceEnumerator::enumerateBluetooth()
     qInfo() << "Passthrough: Bluetooth enumeration not implemented on this platform";
 }
 #endif
+
+// ─── Hot-plug polling ───
+
+void DeviceEnumerator::startHotplugPolling(int intervalMs)
+{
+    m_HotplugTimer.start(intervalMs);
+    qInfo() << "Passthrough: hotplug polling started, interval:" << intervalMs << "ms";
+}
+
+void DeviceEnumerator::stopHotplugPolling()
+{
+    m_HotplugTimer.stop();
+}
+
+void DeviceEnumerator::pollHotplug()
+{
+    // Save current device fingerprints (VID:PID:serial + instancePath)
+    QSet<QString> oldFingerprints;
+    QHash<QString, uint32_t> oldIdMap;
+    for (const auto& dev : m_Devices) {
+        QString fp = QString("%1:%2:%3:%4")
+            .arg(dev.vendorId).arg(dev.productId)
+            .arg(dev.serialNumber).arg(dev.instancePath);
+        oldFingerprints.insert(fp);
+        oldIdMap.insert(fp, dev.deviceId);
+    }
+
+    // Save forwarding state
+    QHash<QString, bool> forwardingState;
+    QHash<QString, bool> autoForwardState;
+    for (const auto& dev : m_Devices) {
+        QString fp = QString("%1:%2:%3:%4")
+            .arg(dev.vendorId).arg(dev.productId)
+            .arg(dev.serialNumber).arg(dev.instancePath);
+        forwardingState.insert(fp, dev.isForwarding);
+        autoForwardState.insert(fp, dev.autoForward);
+    }
+
+    // Re-enumerate
+    beginResetModel();
+    m_Devices.clear();
+    m_NextDeviceId = 1; // Reset to allow stable ID reuse
+    enumerateUsb();
+    enumerateBluetooth();
+    endResetModel();
+
+    // Build new fingerprints and check for changes
+    QSet<QString> newFingerprints;
+    for (auto& dev : m_Devices) {
+        QString fp = QString("%1:%2:%3:%4")
+            .arg(dev.vendorId).arg(dev.productId)
+            .arg(dev.serialNumber).arg(dev.instancePath);
+        newFingerprints.insert(fp);
+
+        // Restore state for devices that persisted
+        if (oldFingerprints.contains(fp)) {
+            dev.deviceId = oldIdMap[fp]; // Keep stable ID
+            dev.isForwarding = forwardingState.value(fp, false);
+            dev.autoForward = autoForwardState.value(fp, false);
+        }
+    }
+
+    // Detect added devices
+    QSet<QString> added = newFingerprints - oldFingerprints;
+    for (const auto& fp : added) {
+        for (const auto& dev : m_Devices) {
+            QString devFp = QString("%1:%2:%3:%4")
+                .arg(dev.vendorId).arg(dev.productId)
+                .arg(dev.serialNumber).arg(dev.instancePath);
+            if (devFp == fp) {
+                qInfo() << "Passthrough: device added:" << dev.name;
+                emit deviceAdded(dev.deviceId);
+                break;
+            }
+        }
+    }
+
+    // Detect removed devices
+    QSet<QString> removed = oldFingerprints - newFingerprints;
+    for (const auto& fp : removed) {
+        uint32_t id = oldIdMap.value(fp, 0);
+        if (id > 0) {
+            qInfo() << "Passthrough: device removed, id:" << id;
+            emit deviceRemoved(id);
+        }
+    }
+
+    if (!added.isEmpty() || !removed.isEmpty()) {
+        emit devicesChanged();
+    }
+}

@@ -68,33 +68,23 @@ int main(int argc, char* argv[])
     }
 #endif
 
-    // Check VHCI driver
-    VhciManager vhci;
-    bool vhciAvailable = vhci.isDriverAvailable();
+    // Start server (VhciManager is created internally)
+    PassthroughServer server;
+    g_Server = &server;
+
+    ServerConfig config;
+    config.port = port;
 
     printf("===========================================\n");
     printf(" Moonlight Passthrough Server v%d.%d\n",
            MlptProtocol::VERSION >> 8, MlptProtocol::VERSION & 0xFF);
     printf("===========================================\n");
     printf(" Port: %d\n", port);
-    printf(" VHCI driver: %s\n", vhciAvailable ? "available" : "NOT AVAILABLE");
-    if (!vhciAvailable) {
-        printf(" WARNING: VHCI driver not found. Device forwarding will not work.\n");
-        printf("          Install usbip-win and enable test signing.\n");
-    }
     printf("===========================================\n\n");
 
     // Set up signal handler
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
-
-    // Start server
-    PassthroughServer server;
-    g_Server = &server;
-
-    ServerConfig config;
-    config.port = port;
-    config.vhciAvailable = vhciAvailable;
 
     if (!server.start(config)) {
         fprintf(stderr, "Failed to start server\n");

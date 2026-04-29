@@ -1,4 +1,5 @@
 #include "passthroughclient.h"
+#include "usbipexporter.h"
 
 #include <QRandomGenerator>
 #include <QtDebug>
@@ -13,6 +14,9 @@ PassthroughClient::PassthroughClient(QObject* parent)
 {
     memset(m_SessionId, 0, sizeof(m_SessionId));
 
+    // Initialize libusb
+    UsbIpExporter::initLibusb();
+
     connect(&m_Socket, &QTcpSocket::connected, this, &PassthroughClient::onSocketConnected);
     connect(&m_Socket, &QTcpSocket::disconnected, this, &PassthroughClient::onSocketDisconnected);
     connect(&m_Socket, &QTcpSocket::readyRead, this, &PassthroughClient::onReadyRead);
@@ -26,11 +30,21 @@ PassthroughClient::PassthroughClient(QObject* parent)
 
     // Initialize device enumeration
     m_DeviceEnumerator.enumerate();
+
+    // Handle hot-plug device removal: auto-detach forwarded devices that were unplugged
+    connect(&m_DeviceEnumerator, &DeviceEnumerator::deviceRemoved, this,
+        [this](uint32_t deviceId) {
+            if (m_Exporters.contains(deviceId)) {
+                qInfo() << "Passthrough: forwarded device" << deviceId << "was unplugged, detaching";
+                detachDevice(deviceId);
+            }
+        });
 }
 
 PassthroughClient::~PassthroughClient()
 {
     disconnectFromServer();
+    cleanupAllExporters();
 }
 
 void PassthroughClient::connectToServer(const QString& address, uint16_t port)
@@ -53,7 +67,11 @@ void PassthroughClient::disconnectFromServer()
 {
     m_KeepaliveTimer.stop();
     m_ReconnectTimer.stop();
+    m_DeviceEnumerator.stopHotplugPolling();
     m_ReconnectAttempts = MAX_RECONNECT_ATTEMPTS; // Prevent reconnect
+
+    // Release all forwarded devices back to client
+    cleanupAllExporters();
 
     if (m_Socket.state() != QAbstractSocket::UnconnectedState) {
         m_Socket.disconnectFromHost();
@@ -70,13 +88,70 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         return;
     }
 
-    MlptProtocol::DeviceDetachPayload payload; // Same struct: just a deviceId
-    payload.deviceId = deviceId;
+    // Check if already exporting
+    if (m_Exporters.contains(deviceId)) {
+        qWarning() << "Device" << deviceId << "already being exported";
+        return;
+    }
 
-    QByteArray data(reinterpret_cast<const char*>(&payload), sizeof(payload));
-    sendMessage(MlptProtocol::MSG_DEVICE_ATTACH, data);
+    // Find device info from enumerator
+    const auto& devices = m_DeviceEnumerator.devices();
+    const PassthroughDevice* devInfo = nullptr;
+    for (const auto& d : devices) {
+        if (d.deviceId == deviceId) {
+            devInfo = &d;
+            break;
+        }
+    }
 
-    qInfo() << "Requested attach for device" << deviceId;
+    if (!devInfo) {
+        qWarning() << "Device" << deviceId << "not found in enumerator";
+        emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+        return;
+    }
+
+    // Only USB devices can be captured with libusb for now
+    if (devInfo->transport != MlptProtocol::TRANSPORT_USB) {
+        qWarning() << "Device" << deviceId << "is not USB, cannot attach via USB/IP yet";
+        emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+        return;
+    }
+
+    // Open device with libusb
+    auto* exporter = new UsbIpExporter(this);
+    exporter->setDeviceId(deviceId);
+
+    if (!exporter->openDevice(devInfo->vendorId, devInfo->productId, devInfo->serialNumber)) {
+        qWarning() << "Failed to open device" << deviceId << "with libusb";
+        delete exporter;
+        emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+        return;
+    }
+
+    // Connect URB completion signal
+    connect(exporter, &UsbIpExporter::urbCompleted, this,
+        [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+            // Send USBIP_RETURN to server
+            QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+            payload.append(data);
+            sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+        });
+
+    // Connect device disconnection signal
+    connect(exporter, &UsbIpExporter::deviceDisconnected, this,
+        [this](uint32_t devId) {
+            qInfo() << "Device" << devId << "disconnected unexpectedly";
+            cleanupExporter(devId);
+            detachDevice(devId);
+        });
+
+    m_Exporters.insert(deviceId, exporter);
+
+    // Send DEVICE_ATTACH with USB descriptors
+    sendDeviceAttachWithDescriptors(deviceId, exporter);
+
+    qInfo() << "Requested attach for device" << deviceId
+            << "(captured with libusb, descriptors sent)";
 }
 
 void PassthroughClient::detachDevice(uint32_t deviceId)
@@ -84,6 +159,8 @@ void PassthroughClient::detachDevice(uint32_t deviceId)
     if (!m_Connected) {
         return;
     }
+
+    cleanupExporter(deviceId);
 
     MlptProtocol::DeviceDetachPayload payload;
     payload.deviceId = deviceId;
@@ -212,7 +289,7 @@ void PassthroughClient::sendDeviceList()
 {
     const auto& devices = m_DeviceEnumerator.devices();
 
-    // Build payload: [DeviceListHeader] [DeviceDescriptor + name] * N
+    // Build payload: [DeviceListHeader] [DeviceDescriptor + name + usb descriptors] * N
     QByteArray payload;
 
     MlptProtocol::DeviceListHeader listHeader;
@@ -221,6 +298,7 @@ void PassthroughClient::sendDeviceList()
 
     for (const auto& dev : devices) {
         MlptProtocol::DeviceDescriptor desc;
+        memset(&desc, 0, sizeof(desc));
         desc.deviceId = dev.deviceId;
         desc.vendorId = dev.vendorId;
         desc.productId = dev.productId;
@@ -229,12 +307,16 @@ void PassthroughClient::sendDeviceList()
 
         QByteArray nameUtf8 = dev.name.toUtf8();
         desc.nameLen = static_cast<uint8_t>(qMin(nameUtf8.size(), 255));
-        desc.reserved = 0;
+        desc.usbSpeed = 0;  // Unknown until device is opened with libusb
 
         memset(desc.serialNumber, 0, sizeof(desc.serialNumber));
         QByteArray serialUtf8 = dev.serialNumber.toUtf8();
         strncpy(desc.serialNumber, serialUtf8.constData(),
                 qMin(static_cast<size_t>(serialUtf8.size()), sizeof(desc.serialNumber) - 1));
+
+        // USB descriptors are only sent in DEVICE_ATTACH, not in DEVICE_LIST
+        desc.usbDescrDevLen = 0;
+        desc.usbDescrConfLen = 0;
 
         payload.append(reinterpret_cast<const char*>(&desc), sizeof(desc));
         payload.append(nameUtf8.constData(), desc.nameLen);
@@ -245,6 +327,114 @@ void PassthroughClient::sendDeviceList()
 }
 
 // ─── Message processing ───
+
+void PassthroughClient::sendDeviceAttachWithDescriptors(uint32_t deviceId, UsbIpExporter* exporter)
+{
+    // Build a DeviceDescriptor with USB descriptors appended
+    const auto& devices = m_DeviceEnumerator.devices();
+    const PassthroughDevice* devInfo = nullptr;
+    for (const auto& d : devices) {
+        if (d.deviceId == deviceId) {
+            devInfo = &d;
+            break;
+        }
+    }
+    if (!devInfo) return;
+
+    QByteArray usbDevDescr = exporter->deviceDescriptor();
+    QByteArray usbConfDescr = exporter->configDescriptor();
+
+    MlptProtocol::DeviceDescriptor desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.deviceId = deviceId;
+    desc.vendorId = devInfo->vendorId;
+    desc.productId = devInfo->productId;
+    desc.transport = devInfo->transport;
+    desc.deviceClass = devInfo->deviceClass;
+
+    QByteArray nameUtf8 = devInfo->name.toUtf8();
+    desc.nameLen = static_cast<uint8_t>(qMin(nameUtf8.size(), 255));
+    desc.usbSpeed = exporter->usbSpeed();
+
+    memset(desc.serialNumber, 0, sizeof(desc.serialNumber));
+    QByteArray serialUtf8 = devInfo->serialNumber.toUtf8();
+    strncpy(desc.serialNumber, serialUtf8.constData(),
+            qMin(static_cast<size_t>(serialUtf8.size()), sizeof(desc.serialNumber) - 1));
+
+    desc.usbDescrDevLen = static_cast<uint16_t>(usbDevDescr.size());
+    desc.usbDescrConfLen = static_cast<uint16_t>(usbConfDescr.size());
+
+    QByteArray payload;
+    payload.append(reinterpret_cast<const char*>(&desc), sizeof(desc));
+    payload.append(nameUtf8.constData(), desc.nameLen);
+    payload.append(usbDevDescr);
+    payload.append(usbConfDescr);
+
+    sendMessage(MlptProtocol::MSG_DEVICE_ATTACH, payload);
+}
+
+void PassthroughClient::processUsbIpSubmit(const QByteArray& payload)
+{
+    if (payload.size() < static_cast<int>(sizeof(MlptProtocol::UsbIpHeader))) {
+        qWarning() << "Passthrough: USBIP_SUBMIT too short";
+        return;
+    }
+
+    MlptProtocol::UsbIpHeader header;
+    memcpy(&header, payload.constData(), sizeof(header));
+
+    QByteArray data;
+    if (header.dataLen > 0 && payload.size() > static_cast<int>(sizeof(header))) {
+        data = payload.mid(sizeof(header), header.dataLen);
+    }
+
+    // Find the exporter for this device
+    auto it = m_Exporters.find(header.deviceId);
+    if (it == m_Exporters.end()) {
+        qWarning() << "Passthrough: USBIP_SUBMIT for unknown device" << header.deviceId;
+        // Send error return
+        MlptProtocol::UsbIpHeader resp = header;
+        resp.status = -19; // ENODEV
+        resp.dataLen = 0;
+        QByteArray respPayload(reinterpret_cast<const char*>(&resp), sizeof(resp));
+        sendMessage(MlptProtocol::MSG_USBIP_RETURN, respPayload);
+        return;
+    }
+
+    (*it)->submitUrb(header, data);
+}
+
+void PassthroughClient::processUsbIpUnlink(const QByteArray& payload)
+{
+    if (payload.size() < static_cast<int>(sizeof(MlptProtocol::UsbIpHeader))) return;
+
+    MlptProtocol::UsbIpHeader header;
+    memcpy(&header, payload.constData(), sizeof(header));
+
+    auto it = m_Exporters.find(header.deviceId);
+    if (it != m_Exporters.end()) {
+        (*it)->unlinkUrb(header.seqNum);
+    }
+}
+
+void PassthroughClient::cleanupExporter(uint32_t deviceId)
+{
+    auto it = m_Exporters.find(deviceId);
+    if (it != m_Exporters.end()) {
+        (*it)->closeDevice();
+        (*it)->deleteLater();
+        m_Exporters.erase(it);
+    }
+}
+
+void PassthroughClient::cleanupAllExporters()
+{
+    for (auto* exporter : m_Exporters) {
+        exporter->closeDevice();
+        exporter->deleteLater();
+    }
+    m_Exporters.clear();
+}
 
 void PassthroughClient::processMessage(const MlptProtocol::Header& header, const QByteArray& payload)
 {
@@ -263,6 +453,10 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
 
         m_KeepaliveTimer.start();
         sendDeviceList();
+
+        // Start hot-plug polling to detect device changes
+        m_DeviceEnumerator.startHotplugPolling(5000);
+
         qInfo() << "Passthrough: handshake complete, VHCI available:" << m_VhciAvailable;
         break;
     }
@@ -293,7 +487,20 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
     }
 
     case MlptProtocol::MSG_USBIP_RETURN: {
-        // TODO Phase 2: Handle USB/IP URB returns
+        // This is actually a SUBMIT from the server (server sends URBs for us to execute)
+        // The naming is from the server's perspective; we renamed for clarity
+        processUsbIpSubmit(payload);
+        break;
+    }
+
+    case MlptProtocol::MSG_USBIP_SUBMIT: {
+        // Server is sending us URBs to execute on the local device
+        processUsbIpSubmit(payload);
+        break;
+    }
+
+    case MlptProtocol::MSG_USBIP_UNLINK: {
+        processUsbIpUnlink(payload);
         break;
     }
 

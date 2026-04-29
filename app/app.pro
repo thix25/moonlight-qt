@@ -50,7 +50,7 @@ win32 {
     }
 
     INCLUDEPATH += $$PWD/../libs/windows/include
-    LIBS += ws2_32.lib winmm.lib dxva2.lib ole32.lib gdi32.lib user32.lib d3d9.lib dwmapi.lib dbghelp.lib setupapi.lib bthprops.lib hid.lib
+    LIBS += ws2_32.lib winmm.lib dxva2.lib ole32.lib gdi32.lib user32.lib d3d9.lib dwmapi.lib dbghelp.lib setupapi.lib bthprops.lib hid.lib libusb-1.0.lib
 
     # Work around a conflict with math.h inclusion between SDL and Qt 6
     DEFINES += _USE_MATH_DEFINES
@@ -203,6 +203,7 @@ SOURCES += \
     streaming/audio/renderers/sdlaud.cpp \
     streaming/passthrough/passthroughclient.cpp \
     streaming/passthrough/deviceenumerator.cpp \
+    streaming/passthrough/usbipexporter.cpp \
     gui/computermodel.cpp \
     gui/appmodel.cpp \
     streaming/bandwidth.cpp \
@@ -244,6 +245,7 @@ HEADERS += \
     streaming/passthrough/protocol.h \
     streaming/passthrough/passthroughclient.h \
     streaming/passthrough/deviceenumerator.h \
+    streaming/passthrough/usbipexporter.h \
     gui/computermodel.h \
     gui/appmodel.h \
     streaming/video/decoder.h \

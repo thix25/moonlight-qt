@@ -68,6 +68,25 @@ enum AttachStatus : uint8_t {
     ATTACH_ERR_FAILED   = 0x03,  // Generic failure
 };
 
+// USB transfer types (matches USB spec)
+enum UsbTransferType : uint8_t {
+    USB_XFER_CONTROL     = 0,
+    USB_XFER_ISOCHRONOUS = 1,
+    USB_XFER_BULK        = 2,
+    USB_XFER_INTERRUPT   = 3,
+};
+
+// USB direction
+enum UsbDirection : uint8_t {
+    USB_DIR_OUT = 0,  // Host to device
+    USB_DIR_IN  = 1,  // Device to host
+};
+
+// Maximum USB descriptor sizes
+static constexpr size_t USB_DEVICE_DESCRIPTOR_SIZE = 18;
+static constexpr size_t USB_MAX_CONFIG_DESCRIPTOR_SIZE = 4096;
+static constexpr size_t USB_SETUP_PACKET_SIZE = 8;
+
 // ─── Wire structures (all little-endian) ───
 
 #pragma pack(push, 1)
@@ -93,7 +112,9 @@ struct HelloAckPayload {
 };
 
 // Device descriptor sent in MSG_DEVICE_LIST and MSG_DEVICE_ATTACH
-// Variable-length: followed by nameLen bytes of UTF-8 device name
+// Variable-length: followed by nameLen bytes of UTF-8 device name,
+// then usbDescrDevLen bytes of USB device descriptor,
+// then usbDescrConfLen bytes of USB configuration descriptor.
 struct DeviceDescriptor {
     uint32_t deviceId;        // Unique ID for this session
     uint16_t vendorId;
@@ -101,14 +122,21 @@ struct DeviceDescriptor {
     uint8_t  transport;       // DeviceTransport
     uint8_t  deviceClass;     // DeviceClass
     uint8_t  nameLen;         // Length of UTF-8 name following this struct
-    uint8_t  reserved;
+    uint8_t  usbSpeed;       // USB speed (1=low, 2=full, 3=high, 4=super)
     char     serialNumber[32]; // Null-terminated serial (or empty)
+    uint16_t usbDescrDevLen;  // Length of USB device descriptor (18 for standard)
+    uint16_t usbDescrConfLen; // Length of full USB configuration descriptor
+    // Followed by: nameLen bytes of name, usbDescrDevLen bytes, usbDescrConfLen bytes
 };
 
-// MSG_DEVICE_LIST payload: [uint16_t count] [DeviceDescriptor + name] * count
+// MSG_DEVICE_LIST payload: [uint16_t count] [DeviceDescriptor + name + usb descriptors] * count
 struct DeviceListHeader {
     uint16_t count;
 };
+
+// MSG_DEVICE_ATTACH payload: DeviceDescriptor followed by variable data
+// The attach message includes full USB descriptors for VHCI plugin
+// (same layout as DeviceDescriptor + trailing data)
 
 // MSG_DEVICE_ATTACH_ACK payload
 struct DeviceAttachAckPayload {
@@ -128,13 +156,23 @@ struct DeviceDetachPayload {
 struct UsbIpHeader {
     uint32_t seqNum;
     uint32_t deviceId;
-    uint8_t  direction;       // 0 = out (host→device), 1 = in (device→host)
+    uint8_t  direction;       // UsbDirection
     uint8_t  endpoint;
-    uint8_t  transferType;    // 0=control, 1=isochronous, 2=bulk, 3=interrupt
-    uint8_t  reserved;
+    uint8_t  transferType;    // UsbTransferType
+    uint8_t  flags;           // Bit 0: setup packet present (for control xfers)
     uint32_t dataLen;
     int32_t  status;          // 0 = success, negative = error (for RETURN)
-    // For control transfers: 8-byte setup packet follows here
+    uint32_t startFrame;      // For isochronous transfers
+    uint32_t numIsoPackets;   // Number of ISO packet descriptors following data
+    uint8_t  setupPacket[8];  // USB setup packet (for control transfers)
+};
+
+// ISO packet descriptor (follows data in isochronous transfers)
+struct UsbIpIsoPacket {
+    uint32_t offset;
+    uint32_t length;
+    uint32_t actualLength;    // Filled in RETURN
+    int32_t  status;          // Filled in RETURN
 };
 
 // MSG_BT_DEVICE_INFO payload (supplemental metadata)

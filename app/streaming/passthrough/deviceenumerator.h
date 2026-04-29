@@ -4,6 +4,7 @@
 #include <QAbstractListModel>
 #include <QList>
 #include <QString>
+#include <QTimer>
 
 #include "protocol.h"
 
@@ -66,15 +67,23 @@ public:
     void enumerate();
     void setDeviceForwarding(uint32_t deviceId, bool forwarding);
 
+    // Start/stop periodic hot-plug polling
+    void startHotplugPolling(int intervalMs = 5000);
+    void stopHotplugPolling();
+
     Q_INVOKABLE void setAutoForward(int index, bool autoFwd);
 
 signals:
     void devicesChanged();
+    void deviceAdded(uint32_t deviceId);
+    void deviceRemoved(uint32_t deviceId);
 
 private:
     void enumerateUsb();
     void enumerateBluetooth();
+    void pollHotplug();
 
     uint32_t m_NextDeviceId;
     QList<PassthroughDevice> m_Devices;
+    QTimer m_HotplugTimer;
 };
