@@ -1,5 +1,6 @@
 #include "passthroughclient.h"
 #include "usbipexporter.h"
+#include "bthidcapture.h"
 
 #include <QRandomGenerator>
 #include <QtDebug>
@@ -34,7 +35,7 @@ PassthroughClient::PassthroughClient(QObject* parent)
     // Handle hot-plug device removal: auto-detach forwarded devices that were unplugged
     connect(&m_DeviceEnumerator, &DeviceEnumerator::deviceRemoved, this,
         [this](uint32_t deviceId) {
-            if (m_Exporters.contains(deviceId)) {
+            if (m_Exporters.contains(deviceId) || m_BtCaptures.contains(deviceId)) {
                 qInfo() << "Passthrough: forwarded device" << deviceId << "was unplugged, detaching";
                 detachDevice(deviceId);
             }
@@ -45,6 +46,7 @@ PassthroughClient::~PassthroughClient()
 {
     disconnectFromServer();
     cleanupAllExporters();
+    cleanupAllBtCaptures();
 }
 
 void PassthroughClient::connectToServer(const QString& address, uint16_t port)
@@ -72,6 +74,7 @@ void PassthroughClient::disconnectFromServer()
 
     // Release all forwarded devices back to client
     cleanupAllExporters();
+    cleanupAllBtCaptures();
 
     if (m_Socket.state() != QAbstractSocket::UnconnectedState) {
         m_Socket.disconnectFromHost();
@@ -89,7 +92,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
     }
 
     // Check if already exporting
-    if (m_Exporters.contains(deviceId)) {
+    if (m_Exporters.contains(deviceId) || m_BtCaptures.contains(deviceId)) {
         qWarning() << "Device" << deviceId << "already being exported";
         return;
     }
@@ -110,48 +113,99 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         return;
     }
 
-    // Only USB devices can be captured with libusb for now
-    if (devInfo->transport != MlptProtocol::TRANSPORT_USB) {
-        qWarning() << "Device" << deviceId << "is not USB, cannot attach via USB/IP yet";
+    // USB devices: use libusb (UsbIpExporter)
+    // Bluetooth HID devices: use Windows HID API (BtHidCapture)
+    // Bluetooth non-HID devices: not supported yet
+    if (devInfo->transport == MlptProtocol::TRANSPORT_USB) {
+        // Open device with libusb
+        auto* exporter = new UsbIpExporter(this);
+        exporter->setDeviceId(deviceId);
+
+        if (!exporter->openDevice(devInfo->vendorId, devInfo->productId, devInfo->serialNumber)) {
+            qWarning() << "Failed to open device" << deviceId << "with libusb";
+            delete exporter;
+            emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+            return;
+        }
+
+        // Connect URB completion signal
+        connect(exporter, &UsbIpExporter::urbCompleted, this,
+            [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+                Q_UNUSED(devId);
+                QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+                payload.append(data);
+                sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+            });
+
+        // Connect device disconnection signal
+        connect(exporter, &UsbIpExporter::deviceDisconnected, this,
+            [this](uint32_t devId) {
+                qInfo() << "Device" << devId << "disconnected unexpectedly";
+                cleanupExporter(devId);
+                detachDevice(devId);
+            });
+
+        m_Exporters.insert(deviceId, exporter);
+
+        // Send DEVICE_ATTACH with USB descriptors
+        sendDeviceAttachWithDescriptors(deviceId, exporter);
+
+        qInfo() << "Requested attach for USB device" << deviceId
+                << "(captured with libusb, descriptors sent)";
+
+    } else if (devInfo->transport == MlptProtocol::TRANSPORT_BLUETOOTH) {
+        // Check if this is a HID-capable BT device
+        uint8_t dc = devInfo->deviceClass;
+        if (dc != MlptProtocol::DEVCLASS_HID_KEYBOARD &&
+            dc != MlptProtocol::DEVCLASS_HID_MOUSE &&
+            dc != MlptProtocol::DEVCLASS_HID_GAMEPAD &&
+            dc != MlptProtocol::DEVCLASS_HID_OTHER) {
+            qWarning() << "Device" << deviceId << "is a non-HID Bluetooth device, cannot forward";
+            emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+            return;
+        }
+
+        auto* capture = new BtHidCapture(this);
+        capture->setDeviceId(deviceId);
+
+        // Open using BT address (stored in serialNumber) + VID/PID if available
+        if (!capture->openDevice(devInfo->serialNumber, devInfo->vendorId, devInfo->productId)) {
+            qWarning() << "Failed to open BT HID device" << deviceId << devInfo->name;
+            delete capture;
+            emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+            return;
+        }
+
+        // Connect URB completion signal
+        connect(capture, &BtHidCapture::urbCompleted, this,
+            [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+                Q_UNUSED(devId);
+                QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+                payload.append(data);
+                sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+            });
+
+        // Connect device disconnection signal
+        connect(capture, &BtHidCapture::deviceDisconnected, this,
+            [this](uint32_t devId) {
+                qInfo() << "BT device" << devId << "disconnected unexpectedly";
+                cleanupBtCapture(devId);
+                detachDevice(devId);
+            });
+
+        m_BtCaptures.insert(deviceId, capture);
+
+        // Send DEVICE_ATTACH with synthesized USB descriptors
+        sendDeviceAttachWithDescriptors(deviceId, capture);
+
+        qInfo() << "Requested attach for BT HID device" << deviceId
+                << "(captured with HID API, descriptors sent)";
+
+    } else {
+        qWarning() << "Device" << deviceId << "has unsupported transport" << devInfo->transport;
         emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
         return;
     }
-
-    // Open device with libusb
-    auto* exporter = new UsbIpExporter(this);
-    exporter->setDeviceId(deviceId);
-
-    if (!exporter->openDevice(devInfo->vendorId, devInfo->productId, devInfo->serialNumber)) {
-        qWarning() << "Failed to open device" << deviceId << "with libusb";
-        delete exporter;
-        emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
-        return;
-    }
-
-    // Connect URB completion signal
-    connect(exporter, &UsbIpExporter::urbCompleted, this,
-        [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
-            // Send USBIP_RETURN to server
-            QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
-            payload.append(data);
-            sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
-        });
-
-    // Connect device disconnection signal
-    connect(exporter, &UsbIpExporter::deviceDisconnected, this,
-        [this](uint32_t devId) {
-            qInfo() << "Device" << devId << "disconnected unexpectedly";
-            cleanupExporter(devId);
-            detachDevice(devId);
-        });
-
-    m_Exporters.insert(deviceId, exporter);
-
-    // Send DEVICE_ATTACH with USB descriptors
-    sendDeviceAttachWithDescriptors(deviceId, exporter);
-
-    qInfo() << "Requested attach for device" << deviceId
-            << "(captured with libusb, descriptors sent)";
 }
 
 void PassthroughClient::detachDevice(uint32_t deviceId)
@@ -161,6 +215,7 @@ void PassthroughClient::detachDevice(uint32_t deviceId)
     }
 
     cleanupExporter(deviceId);
+    cleanupBtCapture(deviceId);
 
     MlptProtocol::DeviceDetachPayload payload;
     payload.deviceId = deviceId;
@@ -373,6 +428,51 @@ void PassthroughClient::sendDeviceAttachWithDescriptors(uint32_t deviceId, UsbIp
     sendMessage(MlptProtocol::MSG_DEVICE_ATTACH, payload);
 }
 
+void PassthroughClient::sendDeviceAttachWithDescriptors(uint32_t deviceId, BtHidCapture* capture)
+{
+    // Build a DeviceDescriptor with synthesized USB descriptors from BtHidCapture
+    const auto& devices = m_DeviceEnumerator.devices();
+    const PassthroughDevice* devInfo = nullptr;
+    for (const auto& d : devices) {
+        if (d.deviceId == deviceId) {
+            devInfo = &d;
+            break;
+        }
+    }
+    if (!devInfo) return;
+
+    QByteArray usbDevDescr = capture->deviceDescriptor();
+    QByteArray usbConfDescr = capture->configDescriptor();
+
+    MlptProtocol::DeviceDescriptor desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.deviceId = deviceId;
+    desc.vendorId = capture->vendorId();
+    desc.productId = capture->productId();
+    desc.transport = MlptProtocol::TRANSPORT_USB; // Present as USB to server
+    desc.deviceClass = devInfo->deviceClass;
+
+    QByteArray nameUtf8 = devInfo->name.toUtf8();
+    desc.nameLen = static_cast<uint8_t>(qMin(nameUtf8.size(), 255));
+    desc.usbSpeed = capture->usbSpeed();
+
+    memset(desc.serialNumber, 0, sizeof(desc.serialNumber));
+    QByteArray serialUtf8 = devInfo->serialNumber.toUtf8();
+    strncpy(desc.serialNumber, serialUtf8.constData(),
+            qMin(static_cast<size_t>(serialUtf8.size()), sizeof(desc.serialNumber) - 1));
+
+    desc.usbDescrDevLen = static_cast<uint16_t>(usbDevDescr.size());
+    desc.usbDescrConfLen = static_cast<uint16_t>(usbConfDescr.size());
+
+    QByteArray payload;
+    payload.append(reinterpret_cast<const char*>(&desc), sizeof(desc));
+    payload.append(nameUtf8.constData(), desc.nameLen);
+    payload.append(usbDevDescr);
+    payload.append(usbConfDescr);
+
+    sendMessage(MlptProtocol::MSG_DEVICE_ATTACH, payload);
+}
+
 void PassthroughClient::processUsbIpSubmit(const QByteArray& payload)
 {
     if (payload.size() < static_cast<int>(sizeof(MlptProtocol::UsbIpHeader))) {
@@ -388,20 +488,26 @@ void PassthroughClient::processUsbIpSubmit(const QByteArray& payload)
         data = payload.mid(sizeof(header), header.dataLen);
     }
 
-    // Find the exporter for this device
+    // Find the exporter for this device (USB or BT)
     auto it = m_Exporters.find(header.deviceId);
-    if (it == m_Exporters.end()) {
-        qWarning() << "Passthrough: USBIP_SUBMIT for unknown device" << header.deviceId;
-        // Send error return
-        MlptProtocol::UsbIpHeader resp = header;
-        resp.status = -19; // ENODEV
-        resp.dataLen = 0;
-        QByteArray respPayload(reinterpret_cast<const char*>(&resp), sizeof(resp));
-        sendMessage(MlptProtocol::MSG_USBIP_RETURN, respPayload);
+    if (it != m_Exporters.end()) {
+        (*it)->submitUrb(header, data);
         return;
     }
 
-    (*it)->submitUrb(header, data);
+    auto btIt = m_BtCaptures.find(header.deviceId);
+    if (btIt != m_BtCaptures.end()) {
+        (*btIt)->submitUrb(header, data);
+        return;
+    }
+
+    qWarning() << "Passthrough: USBIP_SUBMIT for unknown device" << header.deviceId;
+    // Send error return
+    MlptProtocol::UsbIpHeader resp = header;
+    resp.status = -19; // ENODEV
+    resp.dataLen = 0;
+    QByteArray respPayload(reinterpret_cast<const char*>(&resp), sizeof(resp));
+    sendMessage(MlptProtocol::MSG_USBIP_RETURN, respPayload);
 }
 
 void PassthroughClient::processUsbIpUnlink(const QByteArray& payload)
@@ -414,6 +520,12 @@ void PassthroughClient::processUsbIpUnlink(const QByteArray& payload)
     auto it = m_Exporters.find(header.deviceId);
     if (it != m_Exporters.end()) {
         (*it)->unlinkUrb(header.seqNum);
+        return;
+    }
+
+    auto btIt = m_BtCaptures.find(header.deviceId);
+    if (btIt != m_BtCaptures.end()) {
+        (*btIt)->unlinkUrb(header.seqNum);
     }
 }
 
@@ -434,6 +546,25 @@ void PassthroughClient::cleanupAllExporters()
         exporter->deleteLater();
     }
     m_Exporters.clear();
+}
+
+void PassthroughClient::cleanupBtCapture(uint32_t deviceId)
+{
+    auto it = m_BtCaptures.find(deviceId);
+    if (it != m_BtCaptures.end()) {
+        (*it)->closeDevice();
+        (*it)->deleteLater();
+        m_BtCaptures.erase(it);
+    }
+}
+
+void PassthroughClient::cleanupAllBtCaptures()
+{
+    for (auto* capture : m_BtCaptures) {
+        capture->closeDevice();
+        capture->deleteLater();
+    }
+    m_BtCaptures.clear();
 }
 
 void PassthroughClient::processMessage(const MlptProtocol::Header& header, const QByteArray& payload)
