@@ -6,6 +6,8 @@
 #include <atomic>
 #include <mutex>
 #include <functional>
+#include <memory>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <WinSock2.h>
@@ -21,6 +23,7 @@ struct ClientConnection {
     std::thread thread;
     std::atomic<bool> running;
     uint8_t sessionId[16];
+    std::mutex sendMutex;  // Protects multi-part sends on the socket
 
     ClientConnection() : socket(INVALID_SOCKET), running(false) {
         memset(sessionId, 0, sizeof(sessionId));
@@ -48,7 +51,7 @@ private:
     void acceptLoop();
     void clientLoop(ClientConnection* client);
 
-    bool sendMessage(SOCKET sock, MlptProtocol::MsgType type,
+    bool sendMessage(ClientConnection* client, MlptProtocol::MsgType type,
                      const void* payload = nullptr, uint32_t payloadLen = 0);
     bool recvExact(SOCKET sock, void* buf, int len);
 
@@ -62,6 +65,10 @@ private:
     void handleDeviceDetach(ClientConnection* client, const std::vector<uint8_t>& payload);
     void handleUsbIpReturn(ClientConnection* client, const std::vector<uint8_t>& payload);
 
+    // Convert native VHCI URB to our protocol format and send to client
+    void forwardVhciUrbToClient(uint32_t deviceId,
+                                const uint8_t* nativeData, size_t nativeLen);
+
     void log(const std::string& msg);
 
     SOCKET m_ListenSocket;
@@ -71,6 +78,10 @@ private:
 
     std::mutex m_ClientsMutex;
     std::vector<std::unique_ptr<ClientConnection>> m_Clients;
+
+    // Maps deviceId -> ClientConnection* that owns it
+    std::mutex m_DeviceOwnersMutex;
+    std::unordered_map<uint32_t, ClientConnection*> m_DeviceOwners;
 
     VhciManager m_VhciManager;
 
