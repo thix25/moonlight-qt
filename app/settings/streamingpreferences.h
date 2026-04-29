@@ -199,6 +199,15 @@ public:
     Q_INVOKABLE QString getShortcutForAction(const QString& action) const;
     Q_INVOKABLE QStringList getAvailableShortcutActions() const;
 
+    // Preset management
+    Q_INVOKABLE QStringList getPresetNames() const;
+    Q_INVOKABLE bool savePreset(const QString& presetName);
+    Q_INVOKABLE bool loadPreset(const QString& presetName);
+    Q_INVOKABLE bool deletePreset(const QString& presetName);
+    Q_INVOKABLE bool renamePreset(const QString& oldName, const QString& newName);
+    Q_INVOKABLE bool presetExists(const QString& presetName) const;
+    Q_INVOKABLE void applyPresetToClient(const QString& presetName, const QString& clientUuid);
+
     // Custom order management for apps (per computer)
     Q_INVOKABLE QStringList getAppCustomOrder(const QString& computerUuid) const;
     Q_INVOKABLE void setAppCustomOrder(const QString& computerUuid, const QStringList& appIds);

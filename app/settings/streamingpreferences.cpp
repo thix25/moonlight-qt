@@ -780,6 +780,245 @@ void StreamingPreferences::restoreSettings(const QVariantMap& map)
     qInfo() << "Restored settings from snapshot";
 }
 
+// ---- Preset Management ----
+
+QStringList StreamingPreferences::getPresetNames() const
+{
+    QSettings settings;
+    settings.beginGroup("presets");
+    QStringList names = settings.childGroups();
+    settings.endGroup();
+    return names;
+}
+
+bool StreamingPreferences::presetExists(const QString& presetName) const
+{
+    if (presetName.isEmpty()) {
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+    bool exists = !settings.childKeys().isEmpty();
+    settings.endGroup();
+    return exists;
+}
+
+bool StreamingPreferences::savePreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to save preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+
+    // Save all streaming-related settings
+    settings.setValue(SER_WIDTH, width);
+    settings.setValue(SER_HEIGHT, height);
+    settings.setValue(SER_FPS, fps);
+    settings.setValue(SER_BITRATE, bitrateKbps);
+    settings.setValue(SER_UNLOCK_BITRATE, unlockBitrate);
+    settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
+    settings.setValue(SER_VSYNC, enableVsync);
+    settings.setValue(SER_GAMEOPTS, gameOptimizations);
+    settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
+    settings.setValue(SER_MULTICONT, multiController);
+    settings.setValue(SER_MDNS, enableMdns);
+    settings.setValue(SER_QUITAPPAFTER, quitAppAfter);
+    settings.setValue(SER_ABSMOUSEMODE, absoluteMouseMode);
+    settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
+    settings.setValue(SER_FRAMEPACING, framePacing);
+    settings.setValue(SER_CONNWARNINGS, connectionWarnings);
+    settings.setValue(SER_CONFWARNINGS, configurationWarnings);
+    settings.setValue(SER_RICHPRESENCE, richPresence);
+    settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
+    settings.setValue(SER_PACKETSIZE, packetSize);
+    settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
+    settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
+    settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
+    settings.setValue(SER_HDR, enableHdr);
+    settings.setValue(SER_YUV444, enableYUV444);
+    settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
+    settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
+    settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
+    settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
+    settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);
+    settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
+    settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
+    settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
+    settings.setValue(SER_CAPTURESYSKEYS, static_cast<int>(captureSysKeysMode));
+    settings.setValue(SER_KEEPAWAKE, keepAwake);
+
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Saved preset:" << presetName;
+    return true;
+}
+
+bool StreamingPreferences::loadPreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to load preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+
+    if (settings.childKeys().isEmpty()) {
+        qWarning() << "Preset not found:" << presetName;
+        settings.endGroup();
+        return false;
+    }
+
+    // Load all settings from the preset with fallback to current values
+    width = settings.value(SER_WIDTH, width).toInt();
+    height = settings.value(SER_HEIGHT, height).toInt();
+    fps = settings.value(SER_FPS, fps).toInt();
+    bitrateKbps = settings.value(SER_BITRATE, bitrateKbps).toInt();
+    unlockBitrate = settings.value(SER_UNLOCK_BITRATE, unlockBitrate).toBool();
+    autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, autoAdjustBitrate).toBool();
+    enableVsync = settings.value(SER_VSYNC, enableVsync).toBool();
+    gameOptimizations = settings.value(SER_GAMEOPTS, gameOptimizations).toBool();
+    playAudioOnHost = settings.value(SER_HOSTAUDIO, playAudioOnHost).toBool();
+    multiController = settings.value(SER_MULTICONT, multiController).toBool();
+    enableMdns = settings.value(SER_MDNS, enableMdns).toBool();
+    quitAppAfter = settings.value(SER_QUITAPPAFTER, quitAppAfter).toBool();
+    absoluteMouseMode = settings.value(SER_ABSMOUSEMODE, absoluteMouseMode).toBool();
+    absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, absoluteTouchMode).toBool();
+    framePacing = settings.value(SER_FRAMEPACING, framePacing).toBool();
+    connectionWarnings = settings.value(SER_CONNWARNINGS, connectionWarnings).toBool();
+    configurationWarnings = settings.value(SER_CONFWARNINGS, configurationWarnings).toBool();
+    richPresence = settings.value(SER_RICHPRESENCE, richPresence).toBool();
+    gamepadMouse = settings.value(SER_GAMEPADMOUSE, gamepadMouse).toBool();
+    detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, detectNetworkBlocking).toBool();
+    showPerformanceOverlay = settings.value(SER_SHOWPERFOVERLAY, showPerformanceOverlay).toBool();
+    packetSize = settings.value(SER_PACKETSIZE, packetSize).toInt();
+    swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, swapMouseButtons).toBool();
+    muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, muteOnFocusLoss).toBool();
+    backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, backgroundGamepad).toBool();
+    reverseScrollDirection = settings.value(SER_REVERSESCROLL, reverseScrollDirection).toBool();
+    swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, swapFaceButtons).toBool();
+    keepAwake = settings.value(SER_KEEPAWAKE, keepAwake).toBool();
+    enableHdr = settings.value(SER_HDR, enableHdr).toBool();
+    enableYUV444 = settings.value(SER_YUV444, enableYUV444).toBool();
+    captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
+                                                         static_cast<int>(captureSysKeysMode)).toInt());
+    audioConfig = static_cast<AudioConfig>(settings.value(SER_AUDIOCFG,
+                                                  static_cast<int>(audioConfig)).toInt());
+    videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
+                                                  static_cast<int>(videoCodecConfig)).toInt());
+    videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
+                                                  static_cast<int>(videoDecoderSelection)).toInt());
+    windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
+                                                        static_cast<int>(windowMode)).toInt());
+
+    settings.endGroup();
+
+    emitAllChanged();
+
+    qInfo() << "Loaded preset:" << presetName
+            << "resolution:" << width << "x" << height
+            << "fps:" << fps;
+    return true;
+}
+
+bool StreamingPreferences::deletePreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to delete preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets");
+    settings.remove(presetName);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Deleted preset:" << presetName;
+    return true;
+}
+
+bool StreamingPreferences::renamePreset(const QString& oldName, const QString& newName)
+{
+    if (oldName.isEmpty() || newName.isEmpty()) {
+        qWarning() << "Attempted to rename preset with empty name";
+        return false;
+    }
+
+    if (oldName == newName) {
+        return true;
+    }
+
+    if (presetExists(newName)) {
+        qWarning() << "Cannot rename preset: target name already exists:" << newName;
+        return false;
+    }
+
+    QSettings settings;
+
+    // Read all settings from old preset
+    settings.beginGroup("presets/" + oldName);
+    QStringList keys = settings.childKeys();
+    QVariantMap values;
+    for (const QString& key : keys) {
+        values[key] = settings.value(key);
+    }
+    settings.endGroup();
+
+    if (values.isEmpty()) {
+        qWarning() << "Cannot rename preset: source not found:" << oldName;
+        return false;
+    }
+
+    // Write to new preset
+    settings.beginGroup("presets/" + newName);
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
+    settings.endGroup();
+
+    // Delete old preset
+    settings.beginGroup("presets");
+    settings.remove(oldName);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Renamed preset:" << oldName << "->" << newName;
+    return true;
+}
+
+void StreamingPreferences::applyPresetToClient(const QString& presetName, const QString& clientUuid)
+{
+    if (presetName.isEmpty() || clientUuid.isEmpty()) {
+        qWarning() << "Attempted to apply preset with empty name or client UUID";
+        return;
+    }
+
+    // Snapshot current state
+    QVariantMap savedState = snapshotSettings();
+
+    // Load preset into current singleton state
+    if (!loadPreset(presetName)) {
+        return;
+    }
+
+    // Save the loaded preset as client settings
+    saveForClient(clientUuid);
+
+    // Mark as active
+    activateClientSettings(clientUuid);
+
+    // Restore original global state
+    restoreSettings(savedState);
+
+    qInfo() << "Applied preset" << presetName << "to client" << clientUuid;
+}
+
 void StreamingPreferences::emitAllChanged()
 {
     emit displayModeChanged();

@@ -213,6 +213,19 @@ Item {
                     }
                 }
 
+                // Refresh button
+                ToolButton {
+                    id: refreshButton
+                    text: "⟳"
+                    font.pointSize: 18
+                    onClicked: {
+                        computerModel.refreshSort()
+                    }
+                    ToolTip.text: qsTr("Refresh PC list")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+                }
+
                 // Tile size slider
                 Label {
                     text: "🔍"
@@ -337,10 +350,15 @@ Item {
             }
 
             delegate: ItemDelegate {
+                id: listDelegate
                 width: pcListView.width
                 height: collapsedSections[model.section] ? 0 : Math.round(80 * tileScale)
                 visible: !collapsedSections[model.section]
                 highlighted: pcListView.activeFocus && pcListView.currentIndex === index
+
+                // Capture delegate model properties for child access
+                property string pcUuid: model.uuid
+                property bool pcHasClientSettings: model.hasClientSettings
 
                 function activate() {
                     pcClicked(index, model.online, model.paired, model.serverSupported, model.name, model.uuid)
@@ -525,6 +543,49 @@ Item {
                             qsTr("Click to use global settings") :
                             qsTr("Click to use custom settings for this PC")
                         ToolTip.visible: listToggleMouseArea.containsMouse
+                        ToolTip.delay: 800
+                    }
+
+                    // Quick preset selector (active only when using custom settings)
+                    ComboBox {
+                        id: listPresetCombo
+                        visible: showPcInfo
+                        enabled: listDelegate.pcHasClientSettings
+                        opacity: listDelegate.pcHasClientSettings ? 1.0 : 0.35
+                        Layout.preferredWidth: Math.round(120 * tileScale)
+                        font.pointSize: Math.max(7, Math.round(8 * tileScale))
+                        textRole: "text"
+                        model: ListModel { }
+
+                        Component.onCompleted: refreshPresets()
+
+                        function refreshPresets() {
+                            listPresetCombo.model.clear()
+                            listPresetCombo.model.append({text: qsTr("Presets..."), presetName: ""})
+                            var names = StreamingPreferences.getPresetNames()
+                            for (var i = 0; i < names.length; i++) {
+                                listPresetCombo.model.append({text: names[i], presetName: names[i]})
+                            }
+                            currentIndex = 0
+                        }
+
+                        onPressedChanged: {
+                            if (pressed) refreshPresets()
+                        }
+
+                        onActivated: {
+                            if (index > 0 && listDelegate.pcUuid !== "") {
+                                var presetName = listPresetCombo.model.get(index).presetName
+                                StreamingPreferences.applyPresetToClient(presetName, listDelegate.pcUuid)
+                                computerModel.refreshData()
+                            }
+                            currentIndex = 0
+                        }
+
+                        ToolTip.text: listDelegate.pcHasClientSettings
+                            ? qsTr("Apply a preset to this PC")
+                            : qsTr("Enable custom settings first to use presets")
+                        ToolTip.visible: hovered
                         ToolTip.delay: 800
                     }
                 }
@@ -872,6 +933,43 @@ Item {
                                             }
                                         }
 
+                                        // Quick preset selector for grid tiles
+                                        ComboBox {
+                                            id: gridPresetCombo
+                                            width: Math.min(parent.width, Math.round(110 * tileScale))
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            enabled: pcHasClientSettings
+                                            opacity: pcHasClientSettings ? 1.0 : 0.35
+                                            font.pointSize: Math.max(6, Math.round(7 * tileScale))
+                                            textRole: "text"
+                                            model: ListModel { }
+
+                                            Component.onCompleted: refreshPresets()
+
+                                            function refreshPresets() {
+                                                gridPresetCombo.model.clear()
+                                                gridPresetCombo.model.append({text: qsTr("Presets..."), presetName: ""})
+                                                var names = StreamingPreferences.getPresetNames()
+                                                for (var i = 0; i < names.length; i++) {
+                                                    gridPresetCombo.model.append({text: names[i], presetName: names[i]})
+                                                }
+                                                currentIndex = 0
+                                            }
+
+                                            onPressedChanged: {
+                                                if (pressed) refreshPresets()
+                                            }
+
+                                            onActivated: {
+                                                if (index > 0 && pcUuid !== "") {
+                                                    var presetName = gridPresetCombo.model.get(index).presetName
+                                                    StreamingPreferences.applyPresetToClient(presetName, pcUuid)
+                                                    computerModel.refreshData()
+                                                }
+                                                currentIndex = 0
+                                            }
+                                        }
+
                                         // Compact settings summary
                                         Label {
                                             width: parent.width
@@ -960,6 +1058,14 @@ Item {
                                                         clientSettingsDialog.clientUuid = pcUuid
                                                         clientSettingsDialog.open()
                                                     }
+                                                }
+                                            }
+                                            NavigableMenuItem {
+                                                text: qsTr("Apply Preset...")
+                                                onTriggered: {
+                                                    applyPresetDialog.targetUuid = pcUuid
+                                                    applyPresetDialog.targetName = pcName
+                                                    applyPresetDialog.open()
                                                 }
                                             }
                                             NavigableMenuItem {
@@ -1122,6 +1228,14 @@ Item {
             }
         }
         NavigableMenuItem {
+            text: qsTr("Apply Preset...")
+            onTriggered: {
+                applyPresetDialog.targetUuid = pcSectionContextMenu.pcUuid
+                applyPresetDialog.targetName = pcSectionContextMenu.pcName
+                applyPresetDialog.open()
+            }
+        }
+        NavigableMenuItem {
             text: qsTr("Rename PC")
             onTriggered: {
                 renamePcDialog.pcIndex = pcSectionContextMenu.pcIndex
@@ -1174,6 +1288,11 @@ Item {
 
     ClientSettingsDialog {
         id: clientSettingsDialog
+        onClosed: {
+            // Refresh the computer model after any dialog interaction
+            // (accept, reject, or reset) to update settings summary display
+            computerModel.refreshData()
+        }
     }
 
     NavigableMessageDialog {
@@ -1322,6 +1441,63 @@ Item {
 
                 Keys.onReturnPressed: movePcToPositionDialog.accept()
                 Keys.onEnterPressed: movePcToPositionDialog.accept()
+            }
+        }
+    }
+
+    // Apply Preset Dialog (used from right-click context menus)
+    NavigableDialog {
+        id: applyPresetDialog
+        property string targetUuid: ""
+        property string targetName: ""
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Apply Preset to %1").arg(targetName)
+
+        onOpened: {
+            applyPresetListModel.clear()
+            var names = StreamingPreferences.getPresetNames()
+            for (var i = 0; i < names.length; i++) {
+                applyPresetListModel.append({text: names[i], presetName: names[i]})
+            }
+            applyPresetCombo.currentIndex = names.length > 0 ? 0 : -1
+            updateOkState()
+        }
+
+        function updateOkState() {
+            if (standardButton) {
+                standardButton(Dialog.Ok).enabled = applyPresetListModel.count > 0 && applyPresetCombo.currentIndex >= 0
+            }
+        }
+
+        onAccepted: {
+            if (applyPresetCombo.currentIndex >= 0 && targetUuid !== "") {
+                var selectedPreset = applyPresetListModel.get(applyPresetCombo.currentIndex).presetName
+                StreamingPreferences.applyPresetToClient(selectedPreset, targetUuid)
+                computerModel.refreshData()
+            }
+        }
+
+        ColumnLayout {
+            spacing: 10
+
+            Label {
+                text: applyPresetListModel.count > 0
+                    ? qsTr("Choose a preset to apply to this PC:")
+                    : qsTr("No presets available. Create presets from PC Settings dialog first.")
+                font.bold: applyPresetListModel.count === 0
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+                Layout.minimumWidth: 300
+            }
+
+            ComboBox {
+                id: applyPresetCombo
+                Layout.fillWidth: true
+                visible: applyPresetListModel.count > 0
+                textRole: "text"
+                model: ListModel {
+                    id: applyPresetListModel
+                }
             }
         }
     }

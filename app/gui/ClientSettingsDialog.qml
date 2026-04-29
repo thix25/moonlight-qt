@@ -76,6 +76,9 @@ NavigableDialog {
                 StreamingPreferences.loadForClient(clientUuid)
             }
             updateUIFromPreferences()
+            
+            // Refresh preset list to show latest presets
+            presetComboBox.refreshPresetList()
         }
     }
     
@@ -311,6 +314,98 @@ NavigableDialog {
                 wrapMode: Text.Wrap
                 font.pointSize: 10
                 color: useGlobalSettings ? "lightgray" : "lightblue"
+            }
+            
+            // Preset management
+            GroupBox {
+                Layout.fillWidth: true
+                title: qsTr("Presets")
+                font.pointSize: 12
+                
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 5
+                    
+                    Label {
+                        text: qsTr("Load a saved preset or save the current settings as a new preset.")
+                        font.pointSize: 10
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                        color: "lightgray"
+                    }
+                    
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        
+                        ComboBox {
+                            id: presetComboBox
+                            Layout.fillWidth: true
+                            model: ListModel {
+                                id: presetListModel
+                            }
+                            textRole: "text"
+                            
+                            Component.onCompleted: {
+                                refreshPresetList()
+                            }
+                            
+                            function refreshPresetList() {
+                                presetListModel.clear()
+                                presetListModel.append({text: qsTr("-- Select Preset --"), presetName: ""})
+                                var names = StreamingPreferences.getPresetNames()
+                                for (var i = 0; i < names.length; i++) {
+                                    presetListModel.append({text: names[i], presetName: names[i]})
+                                }
+                                currentIndex = 0
+                            }
+                        }
+                        
+                        Button {
+                            text: qsTr("Load")
+                            font.pointSize: 10
+                            enabled: presetComboBox.currentIndex > 0
+                            onClicked: {
+                                var selectedPreset = presetListModel.get(presetComboBox.currentIndex).presetName
+                                if (selectedPreset !== "") {
+                                    StreamingPreferences.loadPreset(selectedPreset)
+                                    updateUIFromPreferences()
+                                    useGlobalSettingsCheckbox.checked = false
+                                }
+                            }
+                            ToolTip.text: qsTr("Load the selected preset into the current settings")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 800
+                        }
+                        
+                        Button {
+                            text: qsTr("Save")
+                            font.pointSize: 10
+                            onClicked: {
+                                savePresetDialog.open()
+                            }
+                            ToolTip.text: qsTr("Save the current settings as a preset")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 800
+                        }
+                        
+                        Button {
+                            text: qsTr("Delete")
+                            font.pointSize: 10
+                            enabled: presetComboBox.currentIndex > 0
+                            onClicked: {
+                                var selectedPreset = presetListModel.get(presetComboBox.currentIndex).presetName
+                                if (selectedPreset !== "") {
+                                    deletePresetDialog.presetName = selectedPreset
+                                    deletePresetDialog.open()
+                                }
+                            }
+                            ToolTip.text: qsTr("Delete the selected preset")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 800
+                        }
+                    }
+                }
             }
             
             // Main settings content
@@ -1024,6 +1119,112 @@ NavigableDialog {
                     }
                 }
             }
+        }
+    }
+    
+    // Save Preset Dialog
+    NavigableDialog {
+        id: savePresetDialog
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Save Preset")
+        
+        onOpened: {
+            presetNameField.text = ""
+            presetNameField.forceActiveFocus()
+            updateOkButtonState()
+        }
+        
+        function updateOkButtonState() {
+            if (standardButton) {
+                var name = presetNameField.text.trim()
+                standardButton(Dialog.Ok).enabled = name.length > 0
+            }
+        }
+        
+        onAccepted: {
+            var name = presetNameField.text.trim()
+            if (name.length === 0) {
+                return
+            }
+            
+            // Sanitize: remove characters that are problematic for QSettings group names
+            name = name.replace(/[\/\\]/g, "")
+            if (name.length === 0) {
+                return
+            }
+            
+            if (StreamingPreferences.presetExists(name)) {
+                // Overwrite existing preset - confirm
+                overwritePresetDialog.presetName = name
+                overwritePresetDialog.open()
+                return
+            }
+            
+            doSavePreset(name)
+        }
+        
+        function doSavePreset(name) {
+            // First update preferences from UI so we save current dialog values
+            updatePreferencesFromUI()
+            StreamingPreferences.savePreset(name)
+            presetComboBox.refreshPresetList()
+            // Select the newly saved preset
+            for (var i = 0; i < presetListModel.count; i++) {
+                if (presetListModel.get(i).presetName === name) {
+                    presetComboBox.currentIndex = i
+                    break
+                }
+            }
+        }
+        
+        ColumnLayout {
+            spacing: 10
+            
+            Label {
+                text: qsTr("Enter a name for this preset:")
+                font.bold: true
+            }
+            
+            TextField {
+                id: presetNameField
+                Layout.fillWidth: true
+                Layout.minimumWidth: 300
+                placeholderText: qsTr("e.g., High Quality, Low Latency, 4K Gaming")
+                maximumLength: 100
+                focus: true
+                
+                onTextChanged: {
+                    savePresetDialog.updateOkButtonState()
+                }
+                
+                Keys.onReturnPressed: savePresetDialog.accept()
+                Keys.onEnterPressed: savePresetDialog.accept()
+            }
+        }
+    }
+    
+    // Overwrite Preset Confirmation Dialog
+    NavigableMessageDialog {
+        id: overwritePresetDialog
+        property string presetName: ""
+        text: qsTr("A preset named '%1' already exists. Do you want to overwrite it?").arg(presetName)
+        standardButtons: Dialog.Yes | Dialog.No
+        
+        onAccepted: {
+            savePresetDialog.doSavePreset(presetName)
+        }
+    }
+    
+    // Delete Preset Confirmation Dialog
+    NavigableMessageDialog {
+        id: deletePresetDialog
+        property string presetName: ""
+        text: qsTr("Are you sure you want to delete the preset '%1'?").arg(presetName)
+        standardButtons: Dialog.Yes | Dialog.No
+        
+        onAccepted: {
+            StreamingPreferences.deletePreset(presetName)
+            presetComboBox.refreshPresetList()
         }
     }
 }
