@@ -198,6 +198,17 @@ void PassthroughServer::clientLoop(ClientConnection* client)
 
 // ─── Message I/O (thread-safe) ───
 
+static bool sendAll(SOCKET sock, const char* buf, int len)
+{
+    int sent = 0;
+    while (sent < len) {
+        int n = send(sock, buf + sent, len - sent, 0);
+        if (n == SOCKET_ERROR) return false;
+        sent += n;
+    }
+    return true;
+}
+
 bool PassthroughServer::sendMessage(ClientConnection* client, MlptProtocol::MsgType type,
                                      const void* payload, uint32_t payloadLen)
 {
@@ -206,13 +217,13 @@ bool PassthroughServer::sendMessage(ClientConnection* client, MlptProtocol::MsgT
     uint8_t headerBuf[MlptProtocol::HEADER_SIZE];
     MlptProtocol::writeHeader(headerBuf, type, payloadLen);
 
-    if (send(client->socket, reinterpret_cast<const char*>(headerBuf),
-             MlptProtocol::HEADER_SIZE, 0) == SOCKET_ERROR)
+    if (!sendAll(client->socket, reinterpret_cast<const char*>(headerBuf),
+                 MlptProtocol::HEADER_SIZE))
         return false;
 
     if (payloadLen > 0 && payload) {
-        if (send(client->socket, reinterpret_cast<const char*>(payload),
-                 payloadLen, 0) == SOCKET_ERROR)
+        if (!sendAll(client->socket, reinterpret_cast<const char*>(payload),
+                     payloadLen))
             return false;
     }
     return true;
@@ -413,6 +424,16 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
     log("Device detach request from " + client->address +
         " deviceId=" + std::to_string(req->deviceId));
 
+    // Verify the requesting client owns this device
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        auto it = m_DeviceOwners.find(req->deviceId);
+        if (it == m_DeviceOwners.end() || it->second != client) {
+            log("  -> Rejected: client does not own device " + std::to_string(req->deviceId));
+            return;
+        }
+    }
+
     m_VhciManager.detachDevice(req->deviceId);
 
     {
@@ -582,7 +603,7 @@ void PassthroughServer::log(const std::string& msg)
 
 int PassthroughServer::getClientCount() const
 {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_ClientsMutex));
+    std::lock_guard<std::mutex> lock(m_ClientsMutex);
     int count = 0;
     for (const auto& c : m_Clients) {
         if (c->running) count++;
@@ -592,7 +613,7 @@ int PassthroughServer::getClientCount() const
 
 int PassthroughServer::getDeviceCount() const
 {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_DeviceOwnersMutex));
+    std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
     return static_cast<int>(m_DeviceOwners.size());
 }
 

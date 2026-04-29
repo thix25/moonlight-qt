@@ -40,7 +40,7 @@ public:
     QByteArray deviceDescriptor() const { return m_DeviceDescriptor; }
     QByteArray configDescriptor() const { return m_ConfigDescriptor; }
     QByteArray hidReportDescriptor() const { return m_HidReportDescriptor; }
-    uint8_t usbSpeed() const { return 1; } // Full speed for HID
+    uint8_t usbSpeed() const { return 2; } // Full speed (1=low, 2=full, 3=high, 4=super)
 
     // Handle URBs from the server (VHCI sends GET_DESCRIPTOR, SET_REPORT, etc.)
     void submitUrb(const MlptProtocol::UsbIpHeader& header, const QByteArray& data);

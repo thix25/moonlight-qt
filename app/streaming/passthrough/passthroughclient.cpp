@@ -545,15 +545,19 @@ void PassthroughClient::processUsbIpUnlink(const QByteArray& payload)
     MlptProtocol::UsbIpHeader header;
     memcpy(&header, payload.constData(), sizeof(header));
 
+    // The seqnum of the URB to unlink is stored in header.dataLen
+    // (repurposed by the server's forwardVhciUrbToClient for CMD_UNLINK)
+    uint32_t seqNumToUnlink = header.dataLen;
+
     auto it = m_Exporters.find(header.deviceId);
     if (it != m_Exporters.end()) {
-        (*it)->unlinkUrb(header.seqNum);
+        (*it)->unlinkUrb(seqNumToUnlink);
         return;
     }
 
     auto btIt = m_BtCaptures.find(header.deviceId);
     if (btIt != m_BtCaptures.end()) {
-        (*btIt)->unlinkUrb(header.seqNum);
+        (*btIt)->unlinkUrb(seqNumToUnlink);
     }
 }
 
@@ -645,13 +649,6 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
         qInfo() << "Passthrough: device" << p->deviceId << "detached";
         m_DeviceEnumerator.setDeviceForwarding(p->deviceId, false);
         emit deviceDetached(p->deviceId);
-        break;
-    }
-
-    case MlptProtocol::MSG_USBIP_RETURN: {
-        // This is actually a SUBMIT from the server (server sends URBs for us to execute)
-        // The naming is from the server's perspective; we renamed for clarity
-        processUsbIpSubmit(payload);
         break;
     }
 
