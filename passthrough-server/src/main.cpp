@@ -27,7 +27,9 @@ void signalHandler(int sig)
         g_Server->stop();
     }
     if (g_Tray) {
-        g_Tray->stop();
+        // Thread-safe: posts WM_CLOSE instead of calling DestroyWindow
+        // from the signal handler thread
+        g_Tray->requestStop();
     }
 }
 

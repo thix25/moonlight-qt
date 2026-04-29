@@ -582,9 +582,8 @@ void PassthroughServer::log(const std::string& msg)
 
 int PassthroughServer::getClientCount() const
 {
-    // Count running clients
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_ClientsMutex));
     int count = 0;
-    // Note: this is called from tray thread, but m_Clients is append-only during run
     for (const auto& c : m_Clients) {
         if (c->running) count++;
     }
