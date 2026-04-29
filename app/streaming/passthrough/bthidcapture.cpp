@@ -663,7 +663,7 @@ void BtHidCapture::startReadThread()
     m_ReadRunning = true;
     m_ReadThread = QThread::create([this]() { readLoop(); });
     m_ReadThread->setObjectName("BtHidRead");
-    m_ReadThread->start();
+    m_ReadThread->start(QThread::HighestPriority);
 }
 
 void BtHidCapture::stopReadThread()

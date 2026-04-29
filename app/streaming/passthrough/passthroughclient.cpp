@@ -234,6 +234,23 @@ void PassthroughClient::refreshDevices()
     }
 }
 
+void PassthroughClient::autoAttachDevices()
+{
+    if (!m_Connected || !m_VhciAvailable) return;
+
+    QList<uint32_t> autoIds = m_DeviceEnumerator.getAutoForwardDeviceIds();
+    if (autoIds.isEmpty()) return;
+
+    qInfo() << "Passthrough: auto-attaching" << autoIds.size() << "devices";
+
+    for (uint32_t id : autoIds) {
+        // Skip if already forwarding
+        if (m_Exporters.contains(id) || m_BtCaptures.contains(id)) continue;
+
+        attachDevice(id);
+    }
+}
+
 // ─── Socket event handlers ───
 
 void PassthroughClient::onSocketConnected()
@@ -254,6 +271,17 @@ void PassthroughClient::onSocketDisconnected()
 
     m_KeepaliveTimer.stop();
     setConnected(false);
+
+    // Clean up all forwarding on disconnect — return devices to client
+    cleanupAllExporters();
+    cleanupAllBtCaptures();
+
+    // Reset all forwarding flags in the enumerator
+    for (const auto& dev : m_DeviceEnumerator.devices()) {
+        if (dev.isForwarding) {
+            m_DeviceEnumerator.setDeviceForwarding(dev.deviceId, false);
+        }
+    }
 
     if (m_ReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         int delay = qMin(1000 * (1 << m_ReconnectAttempts), 16000);
@@ -587,6 +615,9 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
 
         // Start hot-plug polling to detect device changes
         m_DeviceEnumerator.startHotplugPolling(5000);
+
+        // Auto-attach devices marked for auto-forward
+        autoAttachDevices();
 
         qInfo() << "Passthrough: handshake complete, VHCI available:" << m_VhciAvailable;
         break;

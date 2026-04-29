@@ -14,8 +14,10 @@
 
 #include "server.h"
 #include "vhci_manager.h"
+#include "systray.h"
 
 static PassthroughServer* g_Server = nullptr;
+static SystemTray* g_Tray = nullptr;
 
 void signalHandler(int sig)
 {
@@ -23,6 +25,9 @@ void signalHandler(int sig)
     printf("\nShutting down...\n");
     if (g_Server) {
         g_Server->stop();
+    }
+    if (g_Tray) {
+        g_Tray->stop();
     }
 }
 
@@ -35,6 +40,7 @@ void printUsage(const char* argv0)
     printf("Usage: %s [options]\n\n", argv0);
     printf("Options:\n");
     printf("  --port N     Listen port (default: %d)\n", MlptProtocol::DEFAULT_PORT);
+    printf("  --no-tray    Run without system tray icon\n");
     printf("  --help       Show this help\n");
     printf("\nThe server listens for connections from Moonlight clients and\n");
     printf("creates virtual USB devices via the VHCI driver.\n");
@@ -43,11 +49,14 @@ void printUsage(const char* argv0)
 int main(int argc, char* argv[])
 {
     uint16_t port = MlptProtocol::DEFAULT_PORT;
+    bool enableTray = true;
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             port = static_cast<uint16_t>(atoi(argv[++i]));
+        } else if (strcmp(argv[i], "--no-tray") == 0) {
+            enableTray = false;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printUsage(argv[0]);
             return 0;
@@ -94,17 +103,49 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    printf("Server running. Press Ctrl+C to stop.\n\n");
+    // Set up system tray
+    SystemTray tray;
+    if (enableTray) {
+        if (tray.init("Moonlight Passthrough Server")) {
+            g_Tray = &tray;
 
-    // Wait until stopped
-    while (server.isRunning()) {
-#ifdef _WIN32
-        Sleep(500);
-#else
-        usleep(500000);
-#endif
+            tray.setExitCallback([&]() {
+                printf("\nExit requested from tray\n");
+                server.stop();
+            });
+
+            tray.setStatus("Listening");
+
+            // Connect status callback from server to tray
+            server.setStatusCallback([&tray](int clients, int devices) {
+                tray.setClientCount(clients);
+                tray.setDeviceCount(devices);
+                tray.setStatus(clients > 0 ? "Connected" : "Listening");
+            });
+        } else {
+            printf("System tray not available, running headless\n");
+            enableTray = false;
+        }
     }
 
+    printf("Server running. Press Ctrl+C to stop.\n\n");
+
+    if (enableTray) {
+        // Run tray message pump on main thread
+        // The server runs on its own threads
+        tray.run();
+    } else {
+        // Headless mode: just wait
+        while (server.isRunning()) {
+#ifdef _WIN32
+            Sleep(500);
+#else
+            usleep(500000);
+#endif
+        }
+    }
+
+    g_Tray = nullptr;
     g_Server = nullptr;
 
 #ifdef _WIN32

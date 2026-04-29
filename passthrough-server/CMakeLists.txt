@@ -13,6 +13,8 @@ add_executable(mlpt-server
     src/server.cpp
     src/vhci_manager.h
     src/vhci_manager.cpp
+    src/systray.h
+    src/systray.cpp
 )
 
 # Include the shared protocol header directory
@@ -22,7 +24,7 @@ target_include_directories(mlpt-server PRIVATE
 
 # Windows-specific: link Winsock2 and SetupAPI
 if(WIN32)
-    target_link_libraries(mlpt-server PRIVATE ws2_32 setupapi)
+    target_link_libraries(mlpt-server PRIVATE ws2_32 setupapi shell32 advapi32)
     target_compile_definitions(mlpt-server PRIVATE
         _WIN32_WINNT=0x0A00
         WIN32_LEAN_AND_MEAN

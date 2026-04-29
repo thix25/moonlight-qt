@@ -130,8 +130,12 @@ void PassthroughServer::acceptLoop()
         ClientConnection* clientPtr = client.get();
         client->thread = std::thread(&PassthroughServer::clientLoop, this, clientPtr);
 
-        std::lock_guard<std::mutex> lock(m_ClientsMutex);
-        m_Clients.push_back(std::move(client));
+        {
+            std::lock_guard<std::mutex> lock(m_ClientsMutex);
+            m_Clients.push_back(std::move(client));
+        }
+
+        notifyStatusChange();
     }
 }
 
@@ -188,6 +192,8 @@ void PassthroughServer::clientLoop(ClientConnection* client)
         closesocket(client->socket);
         client->socket = INVALID_SOCKET;
     }
+
+    notifyStatusChange();
 }
 
 // ─── Message I/O (thread-safe) ───
@@ -385,6 +391,7 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
             }
 
             log("  -> Attached on VHCI port " + std::to_string(port));
+            notifyStatusChange();
         } else {
             ack.status = MlptProtocol::ATTACH_ERR_FAILED;
             ack.vhciPort = 0;
@@ -418,6 +425,7 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
     sendMessage(client, MlptProtocol::MSG_DEVICE_DETACH_ACK, &ack, sizeof(ack));
 
     log("  -> Detached");
+    notifyStatusChange();
 }
 
 // ─── USB/IP URB forwarding ───
@@ -569,5 +577,29 @@ void PassthroughServer::log(const std::string& msg)
         m_LogCallback(msg);
     } else {
         printf("[MLPT] %s\n", msg.c_str());
+    }
+}
+
+int PassthroughServer::getClientCount() const
+{
+    // Count running clients
+    int count = 0;
+    // Note: this is called from tray thread, but m_Clients is append-only during run
+    for (const auto& c : m_Clients) {
+        if (c->running) count++;
+    }
+    return count;
+}
+
+int PassthroughServer::getDeviceCount() const
+{
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_DeviceOwnersMutex));
+    return static_cast<int>(m_DeviceOwners.size());
+}
+
+void PassthroughServer::notifyStatusChange()
+{
+    if (m_StatusCallback) {
+        m_StatusCallback(getClientCount(), getDeviceCount());
     }
 }

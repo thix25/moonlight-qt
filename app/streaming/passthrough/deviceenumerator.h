@@ -4,6 +4,7 @@
 #include <QAbstractListModel>
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include "protocol.h"
@@ -72,6 +73,16 @@ public:
     void stopHotplugPolling();
 
     Q_INVOKABLE void setAutoForward(int index, bool autoFwd);
+
+    // Persist auto-forward device fingerprints to QSettings
+    void saveAutoForwardList() const;
+    void loadAutoForwardList();
+
+    // Get list of device IDs that should be auto-forwarded
+    QList<uint32_t> getAutoForwardDeviceIds() const;
+
+    // Device fingerprint for matching across sessions
+    static QString deviceFingerprint(const PassthroughDevice& dev);
 
 signals:
     void devicesChanged();

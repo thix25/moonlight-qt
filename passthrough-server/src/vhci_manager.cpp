@@ -236,7 +236,11 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
     // Start URB read thread
     dev->readRunning = true;
     AttachedDevice* devPtr = dev.get();
-    dev->readThread = std::thread(&VhciManager::readLoop, this, devPtr);
+    dev->readThread = std::thread([this, devPtr]() {
+        // Boost thread priority for low-latency URB forwarding
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        readLoop(devPtr);
+    });
 
     m_AttachedDevices[deviceId] = std::move(dev);
 

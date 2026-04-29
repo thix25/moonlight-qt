@@ -38,6 +38,9 @@ public:
     Q_INVOKABLE void detachDevice(uint32_t deviceId);
     Q_INVOKABLE void refreshDevices();
 
+    // Auto-attach all devices marked for auto-forward
+    void autoAttachDevices();
+
 signals:
     void connectedChanged();
     void vhciAvailableChanged();

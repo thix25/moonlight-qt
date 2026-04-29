@@ -611,7 +611,7 @@ void UsbIpExporter::startEventThread()
     });
 
     m_EventThread->setObjectName(QString("usb-evt-%1").arg(m_DeviceId));
-    m_EventThread->start();
+    m_EventThread->start(QThread::HighestPriority);
 }
 
 void UsbIpExporter::stopEventThread()
