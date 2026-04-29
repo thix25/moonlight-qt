@@ -20,19 +20,22 @@ bool PassthroughServer::start(const ServerConfig& config)
     m_Config = config;
     m_Config.vhciAvailable = m_VhciManager.isDriverAvailable();
 
-    // Create listening socket
+    // Set up the VHCI URB callback — called from per-device read threads
+    m_VhciManager.setUrbCallback(
+        [this](uint32_t deviceId, const uint8_t* data, size_t len) {
+            forwardVhciUrbToClient(deviceId, data, len);
+        });
+
     m_ListenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_ListenSocket == INVALID_SOCKET) {
         log("Failed to create socket: " + std::to_string(WSAGetLastError()));
         return false;
     }
 
-    // Allow address reuse
     int opt = 1;
     setsockopt(m_ListenSocket, SOL_SOCKET, SO_REUSEADDR,
                reinterpret_cast<const char*>(&opt), sizeof(opt));
 
-    // Bind
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -63,7 +66,6 @@ void PassthroughServer::stop()
 {
     m_Running = false;
 
-    // Close listen socket to unblock accept()
     if (m_ListenSocket != INVALID_SOCKET) {
         closesocket(m_ListenSocket);
         m_ListenSocket = INVALID_SOCKET;
@@ -73,7 +75,6 @@ void PassthroughServer::stop()
         m_AcceptThread.join();
     }
 
-    // Close all client connections
     {
         std::lock_guard<std::mutex> lock(m_ClientsMutex);
         for (auto& client : m_Clients) {
@@ -87,6 +88,11 @@ void PassthroughServer::stop()
             }
         }
         m_Clients.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        m_DeviceOwners.clear();
     }
 
     log("Server stopped");
@@ -107,7 +113,6 @@ void PassthroughServer::acceptLoop()
             continue;
         }
 
-        // Disable Nagle for low latency
         int nodelay = 1;
         setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY,
                    reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
@@ -133,7 +138,6 @@ void PassthroughServer::acceptLoop()
 void PassthroughServer::clientLoop(ClientConnection* client)
 {
     while (client->running && m_Running) {
-        // Read header
         uint8_t headerBuf[MlptProtocol::HEADER_SIZE];
         if (!recvExact(client->socket, headerBuf, MlptProtocol::HEADER_SIZE)) {
             break;
@@ -145,13 +149,11 @@ void PassthroughServer::clientLoop(ClientConnection* client)
             break;
         }
 
-        // Sanity check payload size (max 16 MB)
         if (header.payloadLen > 16 * 1024 * 1024) {
             log("Payload too large from " + client->address + ": " + std::to_string(header.payloadLen));
             break;
         }
 
-        // Read payload
         std::vector<uint8_t> payload(header.payloadLen);
         if (header.payloadLen > 0) {
             if (!recvExact(client->socket, payload.data(), header.payloadLen)) {
@@ -163,6 +165,23 @@ void PassthroughServer::clientLoop(ClientConnection* client)
     }
 
     log("Client disconnected: " + client->address);
+
+    // Detach all devices owned by this client
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        std::vector<uint32_t> toDetach;
+        for (auto& [devId, owner] : m_DeviceOwners) {
+            if (owner == client) {
+                toDetach.push_back(devId);
+            }
+        }
+        for (uint32_t devId : toDetach) {
+            m_DeviceOwners.erase(devId);
+            m_VhciManager.detachDevice(devId);
+            log("Auto-detached device " + std::to_string(devId) + " (client disconnected)");
+        }
+    }
+
     client->running = false;
 
     if (client->socket != INVALID_SOCKET) {
@@ -171,19 +190,23 @@ void PassthroughServer::clientLoop(ClientConnection* client)
     }
 }
 
-// ─── Message I/O ───
+// ─── Message I/O (thread-safe) ───
 
-bool PassthroughServer::sendMessage(SOCKET sock, MlptProtocol::MsgType type,
+bool PassthroughServer::sendMessage(ClientConnection* client, MlptProtocol::MsgType type,
                                      const void* payload, uint32_t payloadLen)
 {
+    std::lock_guard<std::mutex> lock(client->sendMutex);
+
     uint8_t headerBuf[MlptProtocol::HEADER_SIZE];
     MlptProtocol::writeHeader(headerBuf, type, payloadLen);
 
-    if (send(sock, reinterpret_cast<const char*>(headerBuf), MlptProtocol::HEADER_SIZE, 0) == SOCKET_ERROR)
+    if (send(client->socket, reinterpret_cast<const char*>(headerBuf),
+             MlptProtocol::HEADER_SIZE, 0) == SOCKET_ERROR)
         return false;
 
     if (payloadLen > 0 && payload) {
-        if (send(sock, reinterpret_cast<const char*>(payload), payloadLen, 0) == SOCKET_ERROR)
+        if (send(client->socket, reinterpret_cast<const char*>(payload),
+                 payloadLen, 0) == SOCKET_ERROR)
             return false;
     }
     return true;
@@ -226,7 +249,7 @@ void PassthroughServer::processMessage(ClientConnection* client,
         handleUsbIpReturn(client, payload);
         break;
     case MlptProtocol::MSG_KEEPALIVE:
-        sendMessage(client->socket, MlptProtocol::MSG_KEEPALIVE);
+        sendMessage(client, MlptProtocol::MSG_KEEPALIVE);
         break;
     default:
         log("Unknown message type from " + client->address + ": 0x" +
@@ -249,13 +272,12 @@ void PassthroughServer::handleHello(ClientConnection* client,
     log("HELLO from " + client->address +
         " version=" + std::to_string(hello->clientVersion));
 
-    // Send HELLO_ACK
     MlptProtocol::HelloAckPayload ack{};
     ack.serverVersion = MlptProtocol::VERSION;
     ack.vhciAvailable = m_Config.vhciAvailable ? 1 : 0;
     memset(ack.reserved, 0, sizeof(ack.reserved));
 
-    sendMessage(client->socket, MlptProtocol::MSG_HELLO_ACK, &ack, sizeof(ack));
+    sendMessage(client, MlptProtocol::MSG_HELLO_ACK, &ack, sizeof(ack));
 }
 
 void PassthroughServer::handleDeviceList(ClientConnection* client,
@@ -269,7 +291,6 @@ void PassthroughServer::handleDeviceList(ClientConnection* client,
     log("Device list from " + client->address + ": " +
         std::to_string(listHeader->count) + " devices");
 
-    // Parse device descriptors (new format with usbDescrDevLen/usbDescrConfLen)
     size_t offset = sizeof(MlptProtocol::DeviceListHeader);
     for (uint16_t i = 0; i < listHeader->count && offset < payload.size(); i++) {
         if (offset + sizeof(MlptProtocol::DeviceDescriptor) > payload.size()) break;
@@ -283,7 +304,6 @@ void PassthroughServer::handleDeviceList(ClientConnection* client,
             offset += desc->nameLen;
         }
 
-        // Skip USB descriptors if present (they're only meaningful in DEVICE_ATTACH)
         offset += desc->usbDescrDevLen;
         offset += desc->usbDescrConfLen;
 
@@ -305,14 +325,12 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
     auto* desc = reinterpret_cast<const MlptProtocol::DeviceDescriptor*>(payload.data());
     size_t offset = sizeof(MlptProtocol::DeviceDescriptor);
 
-    // Skip device name
     std::string name;
     if (desc->nameLen > 0 && offset + desc->nameLen <= payload.size()) {
         name.assign(reinterpret_cast<const char*>(payload.data() + offset), desc->nameLen);
         offset += desc->nameLen;
     }
 
-    // Extract USB descriptors
     const uint8_t* usbDevDescr = nullptr;
     const uint8_t* usbConfDescr = nullptr;
     size_t usbDevDescrLen = desc->usbDescrDevLen;
@@ -347,7 +365,6 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
         ack.vhciPort = 0;
         log("  -> Failed: missing USB descriptors");
     } else {
-        // Extract serial from DeviceDescriptor
         std::string serial(desc->serialNumber,
             strnlen(desc->serialNumber, sizeof(desc->serialNumber)));
 
@@ -360,6 +377,13 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
         if (port >= 0) {
             ack.status = MlptProtocol::ATTACH_OK;
             ack.vhciPort = static_cast<uint8_t>(port);
+
+            // Track ownership
+            {
+                std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+                m_DeviceOwners[desc->deviceId] = client;
+            }
+
             log("  -> Attached on VHCI port " + std::to_string(port));
         } else {
             ack.status = MlptProtocol::ATTACH_ERR_FAILED;
@@ -368,7 +392,7 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
         }
     }
 
-    sendMessage(client->socket, MlptProtocol::MSG_DEVICE_ATTACH_ACK, &ack, sizeof(ack));
+    sendMessage(client, MlptProtocol::MSG_DEVICE_ATTACH_ACK, &ack, sizeof(ack));
 }
 
 void PassthroughServer::handleDeviceDetach(ClientConnection* client,
@@ -382,34 +406,161 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
     log("Device detach request from " + client->address +
         " deviceId=" + std::to_string(req->deviceId));
 
-    // Detach from VHCI
     m_VhciManager.detachDevice(req->deviceId);
 
-    // Send ACK
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        m_DeviceOwners.erase(req->deviceId);
+    }
+
     MlptProtocol::DeviceDetachPayload ack{};
     ack.deviceId = req->deviceId;
-    sendMessage(client->socket, MlptProtocol::MSG_DEVICE_DETACH_ACK, &ack, sizeof(ack));
+    sendMessage(client, MlptProtocol::MSG_DEVICE_DETACH_ACK, &ack, sizeof(ack));
 
     log("  -> Detached");
+}
+
+// ─── USB/IP URB forwarding ───
+
+void PassthroughServer::forwardVhciUrbToClient(uint32_t deviceId,
+                                                const uint8_t* nativeData, size_t nativeLen)
+{
+    // Called from VhciManager read thread when the driver has a URB for us.
+    // Convert native usbip_header format to our MlptProtocol::UsbIpHeader and send.
+
+    if (nativeLen < sizeof(NativeUsbIpHeader)) return;
+
+    auto* native = reinterpret_cast<const NativeUsbIpHeader*>(nativeData);
+    const uint8_t* trailingData = nativeData + sizeof(NativeUsbIpHeader);
+    size_t trailingLen = nativeLen - sizeof(NativeUsbIpHeader);
+
+    // Find the client that owns this device
+    ClientConnection* owner = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        auto it = m_DeviceOwners.find(deviceId);
+        if (it != m_DeviceOwners.end()) {
+            owner = it->second;
+        }
+    }
+
+    if (!owner || !owner->running) {
+        return;
+    }
+
+    if (native->base.command == USBIP_CMD_SUBMIT) {
+        // Convert CMD_SUBMIT to our UsbIpHeader format
+        MlptProtocol::UsbIpHeader mlptHdr{};
+        mlptHdr.seqNum = native->base.seqnum;
+        mlptHdr.deviceId = deviceId;
+        mlptHdr.direction = static_cast<uint8_t>(native->base.direction);
+        mlptHdr.endpoint = static_cast<uint8_t>(native->base.ep);
+
+        // Determine transfer type from endpoint
+        if (native->base.ep == 0) {
+            mlptHdr.transferType = MlptProtocol::USB_XFER_CONTROL;
+        } else {
+            // Look up endpoint type from config descriptor
+            uint8_t epAddr = static_cast<uint8_t>(native->base.ep);
+            if (native->base.direction == 1) {
+                epAddr |= 0x80; // IN direction bit
+            }
+            int epType = m_VhciManager.getEndpointType(deviceId, epAddr);
+            if (epType >= 0) {
+                mlptHdr.transferType = static_cast<uint8_t>(epType);
+            } else {
+                // Fallback heuristic
+                if (native->u.cmd_submit.number_of_packets > 0) {
+                    mlptHdr.transferType = MlptProtocol::USB_XFER_ISOCHRONOUS;
+                } else {
+                    mlptHdr.transferType = MlptProtocol::USB_XFER_BULK;
+                }
+            }
+        }
+
+        // Check if setup packet is present (control transfers)
+        bool hasSetup = false;
+        for (int i = 0; i < 8; i++) {
+            if (native->u.cmd_submit.setup[i] != 0) {
+                hasSetup = true;
+                break;
+            }
+        }
+        mlptHdr.flags = hasSetup ? 1 : 0;
+
+        mlptHdr.dataLen = static_cast<uint32_t>(
+            native->u.cmd_submit.transfer_buffer_length > 0 ?
+            native->u.cmd_submit.transfer_buffer_length : 0);
+        mlptHdr.status = 0;
+        mlptHdr.startFrame = static_cast<uint32_t>(native->u.cmd_submit.start_frame);
+        mlptHdr.numIsoPackets = static_cast<uint32_t>(native->u.cmd_submit.number_of_packets);
+        memcpy(mlptHdr.setupPacket, native->u.cmd_submit.setup, 8);
+
+        // Build payload: UsbIpHeader + trailing data (OUT data / ISO descriptors)
+        std::vector<uint8_t> payload(sizeof(mlptHdr) + trailingLen);
+        memcpy(payload.data(), &mlptHdr, sizeof(mlptHdr));
+        if (trailingLen > 0) {
+            memcpy(payload.data() + sizeof(mlptHdr), trailingData, trailingLen);
+        }
+
+        sendMessage(owner, MlptProtocol::MSG_USBIP_SUBMIT,
+                    payload.data(), static_cast<uint32_t>(payload.size()));
+
+    } else if (native->base.command == USBIP_CMD_UNLINK) {
+        // Convert CMD_UNLINK to our UsbIpHeader format
+        MlptProtocol::UsbIpHeader mlptHdr{};
+        mlptHdr.seqNum = native->base.seqnum;
+        mlptHdr.deviceId = deviceId;
+        // Store the seqnum to unlink in the dataLen field (repurposed for unlink)
+        mlptHdr.dataLen = native->u.cmd_unlink.seqnum;
+        mlptHdr.status = 0;
+
+        sendMessage(owner, MlptProtocol::MSG_USBIP_UNLINK,
+                    &mlptHdr, sizeof(mlptHdr));
+    }
 }
 
 void PassthroughServer::handleUsbIpReturn(ClientConnection* client,
                                            const std::vector<uint8_t>& payload)
 {
+    // Client is sending back a URB completion (RET_SUBMIT).
+    // Convert from our MlptProtocol::UsbIpHeader format to native usbip_header
+    // and feed it to the VHCI driver via WriteFile.
+
     if (payload.size() < sizeof(MlptProtocol::UsbIpHeader)) {
         return;
     }
 
-    auto* urbHeader = reinterpret_cast<const MlptProtocol::UsbIpHeader*>(payload.data());
+    auto* mlptHdr = reinterpret_cast<const MlptProtocol::UsbIpHeader*>(payload.data());
+    const uint8_t* responseData = payload.data() + sizeof(MlptProtocol::UsbIpHeader);
+    size_t responseDataLen = payload.size() - sizeof(MlptProtocol::UsbIpHeader);
 
-    // The client is sending back a URB completion.
-    // In the full implementation, we would feed this back to the VHCI driver
-    // so the OS receives the USB response.
-    // For now, log it.
-    // TODO: Feed URB return to VHCI driver via DeviceIoControl
+    // Build native RET_SUBMIT header
+    NativeUsbIpHeader native{};
+    native.base.command = USBIP_RET_SUBMIT;
+    native.base.seqnum = mlptHdr->seqNum;
+    native.base.devid = mlptHdr->deviceId;
+    native.base.direction = mlptHdr->direction;
+    native.base.ep = mlptHdr->endpoint;
 
-    (void)urbHeader; // Suppress unused warning
-    // Future: m_VhciManager.feedUrbReturn(urbHeader, payload.data() + sizeof(*urbHeader), urbHeader->dataLen);
+    native.u.ret_submit.status = mlptHdr->status;
+    native.u.ret_submit.actual_length = static_cast<int32_t>(mlptHdr->dataLen);
+    native.u.ret_submit.start_frame = static_cast<int32_t>(mlptHdr->startFrame);
+    native.u.ret_submit.number_of_packets = static_cast<int32_t>(mlptHdr->numIsoPackets);
+    native.u.ret_submit.error_count = 0;
+
+    // Build the WriteFile buffer: native header + response data
+    std::vector<uint8_t> writeBuffer(sizeof(native) + responseDataLen);
+    memcpy(writeBuffer.data(), &native, sizeof(native));
+    if (responseDataLen > 0) {
+        memcpy(writeBuffer.data() + sizeof(native), responseData, responseDataLen);
+    }
+
+    if (!m_VhciManager.feedUrbReturn(mlptHdr->deviceId,
+                                      writeBuffer.data(), writeBuffer.size())) {
+        log("Failed to feed URB return for device " + std::to_string(mlptHdr->deviceId) +
+            " seq=" + std::to_string(mlptHdr->seqNum));
+    }
 }
 
 void PassthroughServer::log(const std::string& msg)

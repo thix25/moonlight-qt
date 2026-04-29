@@ -9,21 +9,21 @@
 #include <initguid.h>
 #pragma comment(lib, "setupapi.lib")
 
-// GUID_DEVINTERFACE_VHCI_USBIP from usbip-win
-// {D35F7840-6A0C-11D2-B841-00C04FAD5171}
 DEFINE_GUID(GUID_DEVINTERFACE_VHCI_USBIP,
     0xD35F7840, 0x6A0C, 0x11D2, 0xB8, 0x41, 0x00, 0xC0, 0x4F, 0xAD, 0x51, 0x71);
 #endif
 
+// Maximum buffer for ReadFile — header + up to 1MB data
+static constexpr size_t VHCI_READ_BUFFER_SIZE = sizeof(NativeUsbIpHeader) + (1024 * 1024);
+
+// ============================================================================
+// Constructor / Destructor
+// ============================================================================
+
 VhciManager::VhciManager()
-#ifdef _WIN32
-    : m_VhciHandle(INVALID_HANDLE_VALUE)
-    , m_DriverAvailable(false)
-#else
     : m_DriverAvailable(false)
-#endif
 {
-    m_DriverAvailable = openVhciHandle();
+    m_DriverAvailable = discoverVhciPath();
     if (m_DriverAvailable) {
         printf("[VHCI] Driver found and opened successfully\n");
     } else {
@@ -33,32 +33,33 @@ VhciManager::VhciManager()
 
 VhciManager::~VhciManager()
 {
-    // Detach all devices
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    for (auto& [id, dev] : m_AttachedDevices) {
-        printf("[VHCI] Cleanup: detaching device %u from port %d\n", id, dev.vhciPort);
-#ifdef _WIN32
-        if (m_VhciHandle != INVALID_HANDLE_VALUE) {
-            VhciUnplugInfo unplug = {};
-            unplug.addr = static_cast<signed char>(dev.vhciPort);
-            DWORD bytesReturned;
-            DeviceIoControl(m_VhciHandle, IOCTL_USBIP_VHCI_UNPLUG_HARDWARE,
-                &unplug, sizeof(unplug), nullptr, 0, &bytesReturned, nullptr);
+    // Detach all devices (stops read threads, unplugs, closes handles)
+    std::vector<uint32_t> deviceIds;
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        for (auto& [id, dev] : m_AttachedDevices) {
+            deviceIds.push_back(id);
         }
-#endif
     }
-    m_AttachedDevices.clear();
-    closeVhciHandle();
+    for (uint32_t id : deviceIds) {
+        detachDevice(id);
+    }
 }
 
-bool VhciManager::isDriverAvailable() const
+bool VhciManager::isDriverAvailable() const { return m_DriverAvailable; }
+
+void VhciManager::setUrbCallback(VhciUrbCallback callback)
 {
-    return m_DriverAvailable;
+    m_UrbCallback = std::move(callback);
 }
+
+// ============================================================================
+// VHCI device path discovery
+// ============================================================================
 
 #ifdef _WIN32
 
-bool VhciManager::openVhciHandle()
+bool VhciManager::discoverVhciPath()
 {
     HDEVINFO devInfo = SetupDiGetClassDevsW(
         &GUID_DEVINTERFACE_VHCI_USBIP, nullptr, nullptr,
@@ -79,7 +80,6 @@ bool VhciManager::openVhciHandle()
         return false;
     }
 
-    // Get required buffer size
     DWORD requiredSize = 0;
     SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, nullptr, 0, &requiredSize, nullptr);
 
@@ -97,54 +97,71 @@ bool VhciManager::openVhciHandle()
         return false;
     }
 
-    // Open the VHCI device
-    m_VhciHandle = CreateFileW(detailData->DevicePath,
+    m_VhciDevicePath = detailData->DevicePath;
+    printf("[VHCI] Device path: %ls\n", m_VhciDevicePath.c_str());
+
+    // Verify we can actually open the device
+    HANDLE testHandle = CreateFileW(m_VhciDevicePath.c_str(),
         GENERIC_READ | GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr, OPEN_EXISTING, 0, nullptr);
 
-    if (m_VhciHandle == INVALID_HANDLE_VALUE) {
+    if (testHandle == INVALID_HANDLE_VALUE) {
         printf("[VHCI] Failed to open VHCI device: %lu\n", GetLastError());
-        printf("[VHCI] Path: %ls\n", detailData->DevicePath);
         free(detailData);
         SetupDiDestroyDeviceInfoList(devInfo);
         return false;
     }
 
-    printf("[VHCI] Opened device: %ls\n", detailData->DevicePath);
+    CloseHandle(testHandle);
     free(detailData);
     SetupDiDestroyDeviceInfoList(devInfo);
     return true;
 }
 
-void VhciManager::closeVhciHandle()
+HANDLE VhciManager::openNewVhciHandle()
 {
-    if (m_VhciHandle != INVALID_HANDLE_VALUE) {
-        CloseHandle(m_VhciHandle);
-        m_VhciHandle = INVALID_HANDLE_VALUE;
+    if (m_VhciDevicePath.empty()) return INVALID_HANDLE_VALUE;
+
+    HANDLE handle = CreateFileW(m_VhciDevicePath.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+
+    if (handle == INVALID_HANDLE_VALUE) {
+        printf("[VHCI] Failed to open new VHCI handle: %lu\n", GetLastError());
     }
+    return handle;
 }
+
+#else
+// Non-Windows stubs
+bool VhciManager::discoverVhciPath() { return false; }
+#endif
+
+// ============================================================================
+// Device attach/detach
+// ============================================================================
 
 int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t productId,
                                const uint8_t* deviceDescriptor, size_t deviceDescrLen,
                                const uint8_t* configDescriptor, size_t configDescrLen,
                                const std::string& serial)
 {
+#ifdef _WIN32
     std::lock_guard<std::mutex> lock(m_Mutex);
 
-    if (m_VhciHandle == INVALID_HANDLE_VALUE) {
+    if (!m_DriverAvailable) {
         printf("[VHCI] Cannot attach: driver not available\n");
         return -1;
     }
 
-    // Check if device is already attached
     if (m_AttachedDevices.count(deviceId)) {
         printf("[VHCI] Device %u already attached on port %d\n",
-               deviceId, m_AttachedDevices[deviceId].vhciPort);
-        return m_AttachedDevices[deviceId].vhciPort;
+               deviceId, m_AttachedDevices[deviceId]->vhciPort);
+        return m_AttachedDevices[deviceId]->vhciPort;
     }
 
-    // Validate descriptor sizes
     if (deviceDescrLen < 18) {
         printf("[VHCI] Device descriptor too short: %zu bytes\n", deviceDescrLen);
         return -1;
@@ -154,16 +171,24 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
         return -1;
     }
 
-    // Allocate variable-length pluginfo
+    // Open a dedicated VHCI handle for this device
+    HANDLE devHandle = openNewVhciHandle();
+    if (devHandle == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+
+    // Build plugin info
     size_t pluginfoSize = sizeof(VhciPlugInfo) + configDescrLen - 9;
     auto* pluginfo = static_cast<VhciPlugInfo*>(calloc(1, pluginfoSize));
-    if (!pluginfo) return -1;
+    if (!pluginfo) {
+        CloseHandle(devHandle);
+        return -1;
+    }
 
     pluginfo->size = static_cast<unsigned long>(pluginfoSize);
     pluginfo->devid = deviceId;
-    pluginfo->port = -1; // Auto-assign
+    pluginfo->port = -1; // auto-assign
 
-    // Set serial
     if (!serial.empty()) {
         size_t converted;
         mbstowcs_s(&converted, pluginfo->wserial, MAX_VHCI_SERIAL_ID, serial.c_str(), _TRUNCATE);
@@ -171,15 +196,12 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
         pluginfo->wserial[0] = L'\0';
     }
 
-    // Copy device descriptor (18 bytes)
     memcpy(pluginfo->dscr_dev, deviceDescriptor, 18);
-
-    // Copy config descriptor (full length, variable)
     memcpy(pluginfo->dscr_conf, configDescriptor, configDescrLen);
 
-    // Send plugin IOCTL
+    // Plugin via IOCTL on the per-device handle
     DWORD bytesReturned;
-    BOOL result = DeviceIoControl(m_VhciHandle,
+    BOOL result = DeviceIoControl(devHandle,
         IOCTL_USBIP_VHCI_PLUGIN_HARDWARE,
         pluginfo, static_cast<DWORD>(pluginfoSize),
         pluginfo, static_cast<DWORD>(pluginfoSize),
@@ -188,6 +210,7 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
     if (!result) {
         printf("[VHCI] PLUGIN IOCTL failed: %lu\n", GetLastError());
         free(pluginfo);
+        CloseHandle(devHandle);
         return -1;
     }
 
@@ -196,120 +219,252 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
 
     if (assignedPort < 0) {
         printf("[VHCI] No free ports available\n");
+        CloseHandle(devHandle);
         return -1;
     }
 
-    // Record the attachment
-    AttachedDevice dev;
-    dev.deviceId = deviceId;
-    dev.vendorId = vendorId;
-    dev.productId = productId;
-    dev.vhciPort = assignedPort;
-    dev.serial = serial;
-    m_AttachedDevices[deviceId] = dev;
+    // Create AttachedDevice
+    auto dev = std::make_unique<AttachedDevice>();
+    dev->deviceId = deviceId;
+    dev->vendorId = vendorId;
+    dev->productId = productId;
+    dev->vhciPort = assignedPort;
+    dev->serial = serial;
+    dev->deviceHandle = devHandle;
+    dev->endpointTypes = parseEndpointTypes(configDescriptor, configDescrLen);
 
-    printf("[VHCI] Device %u (%04X:%04X) attached on port %d\n",
-           deviceId, vendorId, productId, assignedPort);
+    // Start URB read thread
+    dev->readRunning = true;
+    AttachedDevice* devPtr = dev.get();
+    dev->readThread = std::thread(&VhciManager::readLoop, this, devPtr);
+
+    m_AttachedDevices[deviceId] = std::move(dev);
+
+    printf("[VHCI] Device %u (%04X:%04X) attached on port %d, %zu endpoints mapped\n",
+           deviceId, vendorId, productId, assignedPort, devPtr->endpointTypes.size());
     return assignedPort;
+
+#else
+    (void)deviceId; (void)vendorId; (void)productId;
+    (void)deviceDescriptor; (void)deviceDescrLen;
+    (void)configDescriptor; (void)configDescrLen;
+    (void)serial;
+    return -1;
+#endif
 }
 
 bool VhciManager::detachDevice(uint32_t deviceId)
 {
+#ifdef _WIN32
+    std::unique_ptr<AttachedDevice> dev;
+
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        auto it = m_AttachedDevices.find(deviceId);
+        if (it == m_AttachedDevices.end()) {
+            printf("[VHCI] Device %u not found for detach\n", deviceId);
+            return false;
+        }
+        dev = std::move(it->second);
+        m_AttachedDevices.erase(it);
+    }
+
+    // Stop the read thread
+    dev->readRunning = false;
+    if (dev->readThread.joinable()) {
+        // Cancel any pending synchronous I/O on the read thread
+        CancelSynchronousIo(dev->readThread.native_handle());
+        dev->readThread.join();
+    }
+
+    // Unplug from VHCI
+    if (dev->deviceHandle != INVALID_HANDLE_VALUE) {
+        VhciUnplugInfo unplug = {};
+        unplug.addr = static_cast<signed char>(dev->vhciPort);
+        DWORD bytesReturned;
+        DeviceIoControl(dev->deviceHandle, IOCTL_USBIP_VHCI_UNPLUG_HARDWARE,
+            &unplug, sizeof(unplug), nullptr, 0, &bytesReturned, nullptr);
+
+        CloseHandle(dev->deviceHandle);
+        dev->deviceHandle = INVALID_HANDLE_VALUE;
+    }
+
+    printf("[VHCI] Device %u detached from port %d\n", deviceId, dev->vhciPort);
+    return true;
+
+#else
+    (void)deviceId;
+    return false;
+#endif
+}
+
+// ============================================================================
+// URB read loop (runs in per-device thread)
+// ============================================================================
+
+void VhciManager::readLoop(AttachedDevice* dev)
+{
+#ifdef _WIN32
+    printf("[VHCI] Read loop started for device %u on port %d\n",
+           dev->deviceId, dev->vhciPort);
+
+    auto buffer = std::make_unique<uint8_t[]>(VHCI_READ_BUFFER_SIZE);
+
+    while (dev->readRunning) {
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(dev->deviceHandle, buffer.get(),
+                           static_cast<DWORD>(VHCI_READ_BUFFER_SIZE),
+                           &bytesRead, nullptr);
+
+        if (!ok || bytesRead < sizeof(NativeUsbIpHeader)) {
+            DWORD err = GetLastError();
+            if (dev->readRunning && err != ERROR_OPERATION_ABORTED) {
+                printf("[VHCI] ReadFile failed for device %u: error %lu, bytes %lu\n",
+                       dev->deviceId, err, bytesRead);
+            }
+            break;
+        }
+
+        auto* hdr = reinterpret_cast<NativeUsbIpHeader*>(buffer.get());
+
+        // Check if we got a partial read (header only, data still pending)
+        if (hdr->base.command == USBIP_CMD_SUBMIT) {
+            int32_t expectedDataLen = hdr->u.cmd_submit.transfer_buffer_length;
+            bool isOut = (hdr->base.direction == 0);
+
+            if (isOut && expectedDataLen > 0) {
+                size_t totalExpected = sizeof(NativeUsbIpHeader) + expectedDataLen;
+                if (hdr->u.cmd_submit.number_of_packets > 0) {
+                    totalExpected += hdr->u.cmd_submit.number_of_packets *
+                                    sizeof(NativeUsbIpIsoPacketDescriptor);
+                }
+
+                // If we only got the header, do a second read for the data
+                if (bytesRead == sizeof(NativeUsbIpHeader) && totalExpected > sizeof(NativeUsbIpHeader)) {
+                    DWORD dataBytes = 0;
+                    size_t remaining = totalExpected - sizeof(NativeUsbIpHeader);
+                    if (remaining > VHCI_READ_BUFFER_SIZE - sizeof(NativeUsbIpHeader)) {
+                        remaining = VHCI_READ_BUFFER_SIZE - sizeof(NativeUsbIpHeader);
+                    }
+                    ok = ReadFile(dev->deviceHandle,
+                                  buffer.get() + sizeof(NativeUsbIpHeader),
+                                  static_cast<DWORD>(remaining),
+                                  &dataBytes, nullptr);
+                    if (!ok) {
+                        if (dev->readRunning) {
+                            printf("[VHCI] Partial ReadFile failed for device %u: %lu\n",
+                                   dev->deviceId, GetLastError());
+                        }
+                        break;
+                    }
+                    bytesRead += dataBytes;
+                }
+            }
+        }
+
+        // Invoke the callback with the raw native data
+        if (m_UrbCallback) {
+            m_UrbCallback(dev->deviceId, buffer.get(), bytesRead);
+        }
+    }
+
+    printf("[VHCI] Read loop ended for device %u\n", dev->deviceId);
+#else
+    (void)dev;
+#endif
+}
+
+// ============================================================================
+// Feed URB return to VHCI driver
+// ============================================================================
+
+bool VhciManager::feedUrbReturn(uint32_t deviceId, const uint8_t* data, size_t len)
+{
+#ifdef _WIN32
     std::lock_guard<std::mutex> lock(m_Mutex);
 
     auto it = m_AttachedDevices.find(deviceId);
     if (it == m_AttachedDevices.end()) {
-        printf("[VHCI] Device %u not found for detach\n", deviceId);
+        printf("[VHCI] feedUrbReturn: device %u not found\n", deviceId);
         return false;
     }
 
-    if (m_VhciHandle == INVALID_HANDLE_VALUE) {
-        m_AttachedDevices.erase(it);
+    auto& dev = it->second;
+    if (dev->deviceHandle == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    VhciUnplugInfo unplug = {};
-    unplug.addr = static_cast<signed char>(it->second.vhciPort);
+    DWORD bytesWritten;
+    BOOL ok = WriteFile(dev->deviceHandle, data, static_cast<DWORD>(len),
+                        &bytesWritten, nullptr);
 
-    DWORD bytesReturned;
-    BOOL result = DeviceIoControl(m_VhciHandle,
-        IOCTL_USBIP_VHCI_UNPLUG_HARDWARE,
-        &unplug, sizeof(unplug), nullptr, 0, &bytesReturned, nullptr);
-
-    if (!result) {
-        printf("[VHCI] UNPLUG IOCTL failed for port %d: %lu\n",
-               it->second.vhciPort, GetLastError());
-    } else {
-        printf("[VHCI] Device %u detached from port %d\n",
-               deviceId, it->second.vhciPort);
+    if (!ok) {
+        printf("[VHCI] WriteFile failed for device %u: %lu\n",
+               deviceId, GetLastError());
+        return false;
     }
 
-    m_AttachedDevices.erase(it);
-    return result != FALSE;
+    return true;
+
+#else
+    (void)deviceId; (void)data; (void)len;
+    return false;
+#endif
 }
 
-const AttachedDevice* VhciManager::getAttachedDevice(uint32_t deviceId) const
+// ============================================================================
+// Endpoint type map
+// ============================================================================
+
+int VhciManager::getEndpointType(uint32_t deviceId, uint8_t endpointAddress) const
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
+
     auto it = m_AttachedDevices.find(deviceId);
-    return (it != m_AttachedDevices.end()) ? &it->second : nullptr;
+    if (it == m_AttachedDevices.end()) return -1;
+
+    auto epIt = it->second->endpointTypes.find(endpointAddress);
+    if (epIt == it->second->endpointTypes.end()) return -1;
+
+    return epIt->second;
 }
+
+std::unordered_map<uint8_t, uint8_t>
+VhciManager::parseEndpointTypes(const uint8_t* configDescriptor, size_t len)
+{
+    std::unordered_map<uint8_t, uint8_t> result;
+
+    // USB config descriptor format:
+    // Each descriptor starts with bLength (1B), bDescriptorType (1B)
+    // Endpoint descriptor: bDescriptorType = 0x05, bEndpointAddress at offset 2, bmAttributes at offset 3
+    size_t offset = 0;
+    while (offset + 2 <= len) {
+        uint8_t bLength = configDescriptor[offset];
+        uint8_t bDescriptorType = configDescriptor[offset + 1];
+
+        if (bLength < 2 || offset + bLength > len) break;
+
+        if (bDescriptorType == 0x05 && bLength >= 7) {
+            // Endpoint descriptor
+            uint8_t bEndpointAddress = configDescriptor[offset + 2];
+            uint8_t bmAttributes = configDescriptor[offset + 3];
+            uint8_t transferType = bmAttributes & 0x03; // bits 1:0
+
+            result[bEndpointAddress] = transferType;
+        }
+
+        offset += bLength;
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Misc
+// ============================================================================
 
 int VhciManager::getAttachedCount() const
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
     return static_cast<int>(m_AttachedDevices.size());
 }
-
-std::vector<bool> VhciManager::getPortStatus() const
-{
-    std::vector<bool> status(MAX_VHCI_PORTS, false);
-
-    if (m_VhciHandle == INVALID_HANDLE_VALUE) return status;
-
-    VhciPortsStatus portsStatus = {};
-    DWORD bytesReturned;
-    BOOL result = DeviceIoControl(m_VhciHandle,
-        IOCTL_USBIP_VHCI_GET_PORTS_STATUS,
-        nullptr, 0,
-        &portsStatus, sizeof(portsStatus),
-        &bytesReturned, nullptr);
-
-    if (result) {
-        for (int i = 0; i < portsStatus.n_max_ports && i < MAX_VHCI_PORTS; i++) {
-            status[i] = (portsStatus.port_status[i] != 0);
-        }
-    }
-
-    return status;
-}
-
-int VhciManager::findFreePort() const
-{
-    auto status = getPortStatus();
-    for (int i = 0; i < static_cast<int>(status.size()); i++) {
-        if (!status[i]) return i + 1; // Ports are 1-based
-    }
-    return -1;
-}
-
-#else // Non-Windows stub
-
-bool VhciManager::openVhciHandle() { return false; }
-void VhciManager::closeVhciHandle() {}
-
-int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t productId,
-                               const uint8_t*, size_t, const uint8_t*, size_t,
-                               const std::string&)
-{
-    printf("[VHCI] Not supported on this platform\n");
-    return -1;
-}
-
-bool VhciManager::detachDevice(uint32_t) { return false; }
-const AttachedDevice* VhciManager::getAttachedDevice(uint32_t) const { return nullptr; }
-int VhciManager::getAttachedCount() const { return 0; }
-std::vector<bool> VhciManager::getPortStatus() const { return {}; }
-int VhciManager::findFreePort() const { return -1; }
-
-#endif
