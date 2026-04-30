@@ -75,6 +75,7 @@ private:
     void cleanupAllExporters();
     void cleanupBtCapture(uint32_t deviceId);
     void cleanupAllBtCaptures();
+    void scheduleReconnect();
 
     QTcpSocket m_Socket;
     QTimer m_KeepaliveTimer;

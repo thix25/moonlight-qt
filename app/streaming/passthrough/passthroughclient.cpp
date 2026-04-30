@@ -283,27 +283,17 @@ void PassthroughClient::onSocketDisconnected()
         }
     }
 
-    if (m_ReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        int delay = qMin(1000 * (1 << m_ReconnectAttempts), 16000);
-        m_ReconnectAttempts++;
-        setStatusText(tr("Reconnecting in %1s...").arg(delay / 1000));
-        m_ReconnectTimer.start(delay);
-    } else {
-        setStatusText(tr("Disconnected"));
-    }
+    scheduleReconnect();
 }
 
 void PassthroughClient::onSocketError(QAbstractSocket::SocketError error)
 {
-    qWarning() << "Passthrough socket error:" << error << m_Socket.errorString();
+    qWarning() << "Passthrough socket error:" << error
+               << m_Socket.errorString()
+               << "(target:" << m_ServerAddress << ":" << m_ServerPort << ")";
 
-    if (!m_Connected && m_ReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        int delay = qMin(1000 * (1 << m_ReconnectAttempts), 16000);
-        m_ReconnectAttempts++;
-        setStatusText(tr("Connection failed, retry in %1s...").arg(delay / 1000));
-        m_ReconnectTimer.start(delay);
-    } else if (!m_Connected) {
-        setStatusText(tr("Connection failed: %1").arg(m_Socket.errorString()));
+    if (!m_Connected) {
+        scheduleReconnect();
     }
 }
 
@@ -348,8 +338,25 @@ void PassthroughClient::onReconnectTimer()
 {
     if (m_ServerAddress.isEmpty()) return;
 
-    setStatusText(tr("Reconnecting..."));
+    setStatusText(tr("Reconnecting to %1:%2...").arg(m_ServerAddress).arg(m_ServerPort));
     m_Socket.connectToHost(m_ServerAddress, m_ServerPort);
+}
+
+void PassthroughClient::scheduleReconnect()
+{
+    // Guard against double-scheduling when both onSocketError and
+    // onSocketDisconnected fire for the same connection failure
+    if (m_ReconnectTimer.isActive()) return;
+
+    if (m_ReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        int delay = qMin(1000 * (1 << m_ReconnectAttempts), 16000);
+        m_ReconnectAttempts++;
+        setStatusText(tr("Reconnecting in %1s... (%2:%3)")
+                      .arg(delay / 1000).arg(m_ServerAddress).arg(m_ServerPort));
+        m_ReconnectTimer.start(delay);
+    } else {
+        setStatusText(tr("Connection failed: %1").arg(m_Socket.errorString()));
+    }
 }
 
 // ─── Message sending ───

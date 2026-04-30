@@ -10,7 +10,7 @@ namespace MlptProtocol {
 // Protocol constants
 static constexpr uint8_t  MAGIC[4] = { 'M', 'L', 'P', 'T' };
 static constexpr uint16_t VERSION   = 0x0001;
-static constexpr uint16_t DEFAULT_PORT = 47990;
+static constexpr uint16_t DEFAULT_PORT = 47991;
 
 // Header: [4B magic] [2B version] [2B msg_type] [4B payload_length]
 static constexpr size_t HEADER_SIZE = 12;
