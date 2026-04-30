@@ -1163,7 +1163,7 @@ NavigableDialog {
                         }
 
                         Label {
-                            text: qsTr("Requires the companion server (mlpt-server) running on the host PC alongside Sunshine.")
+                            text: qsTr("Optional: requires the companion server (mlpt-server) running on the host PC alongside Sunshine. Streaming works without it — this feature only adds USB/Bluetooth device forwarding.")
                             font.pointSize: 10
                             color: "gray"
                             wrapMode: Text.Wrap

@@ -200,6 +200,8 @@ echo.
 echo ============================================================
 echo  Step 4: Run qmake
 echo ============================================================
+rem Delete stale generated RC file so qmake regenerates it with the current version
+if exist "%SOURCE_ROOT%\app\Moonlight_resource.rc" del /Q "%SOURCE_ROOT%\app\Moonlight_resource.rc"
 if defined USE_JOM (
     echo Running qmake with /MP flag for multi-process compilation...
     qmake moonlight-qt.pro "QMAKE_CXXFLAGS+=/MP" "QMAKE_CFLAGS+=/MP"
