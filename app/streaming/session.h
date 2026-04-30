@@ -144,6 +144,8 @@ signals:
     // Emitted after sessionFinished() when the session is ready to be destroyed
     void readyForDeletion();
 
+    void togglePassthrough();
+
     void launchWarningsChanged();
 
 private:

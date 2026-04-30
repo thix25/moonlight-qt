@@ -137,6 +137,11 @@ bool BtHidCapture::openDevicePath(const QString& hidDevicePath)
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr, OPEN_EXISTING, 0, nullptr);
 
+    if (m_HidHandleInfo == INVALID_HANDLE_VALUE) {
+        qWarning() << "BtHidCapture: failed to open info handle for" << hidDevicePath
+                    << "- continuing with overlapped handle only";
+    }
+
     // Get attributes (VID/PID/version)
     HIDD_ATTRIBUTES attrs = {};
     attrs.Size = sizeof(attrs);

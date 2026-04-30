@@ -20,6 +20,7 @@ class PassthroughClient : public QObject
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
     Q_PROPERTY(bool vhciAvailable READ isVhciAvailable NOTIFY vhciAvailableChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    Q_PROPERTY(DeviceEnumerator* deviceEnumerator READ deviceEnumerator CONSTANT)
 
 public:
     explicit PassthroughClient(QObject* parent = nullptr);

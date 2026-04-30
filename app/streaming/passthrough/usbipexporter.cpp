@@ -391,6 +391,15 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
         // Data follows for OUT, buffer allocated for IN
         int totalLen = LIBUSB_CONTROL_SETUP_SIZE + header.dataLen;
         unsigned char* buf = static_cast<unsigned char*>(malloc(totalLen));
+        if (!buf) {
+            MlptProtocol::UsbIpHeader resp = header;
+            resp.status = -12;
+            resp.dataLen = 0;
+            emit urbCompleted(m_DeviceId, resp, QByteArray());
+            delete ctx;
+            libusb_free_transfer(xfer);
+            return;
+        }
 
         // Copy setup packet
         memcpy(buf, header.setupPacket, 8);
@@ -407,6 +416,15 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
     case MlptProtocol::USB_XFER_BULK: {
         int bufLen = header.dataLen;
         unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        if (!buf) {
+            MlptProtocol::UsbIpHeader resp = header;
+            resp.status = -12;
+            resp.dataLen = 0;
+            emit urbCompleted(m_DeviceId, resp, QByteArray());
+            delete ctx;
+            libusb_free_transfer(xfer);
+            return;
+        }
         if (header.direction == MlptProtocol::USB_DIR_OUT && !data.isEmpty()) {
             memcpy(buf, data.constData(), qMin(static_cast<uint32_t>(data.size()), header.dataLen));
         }
@@ -419,6 +437,15 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
     case MlptProtocol::USB_XFER_INTERRUPT: {
         int bufLen = header.dataLen;
         unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        if (!buf) {
+            MlptProtocol::UsbIpHeader resp = header;
+            resp.status = -12;
+            resp.dataLen = 0;
+            emit urbCompleted(m_DeviceId, resp, QByteArray());
+            delete ctx;
+            libusb_free_transfer(xfer);
+            return;
+        }
         if (header.direction == MlptProtocol::USB_DIR_OUT && !data.isEmpty()) {
             memcpy(buf, data.constData(), qMin(static_cast<uint32_t>(data.size()), header.dataLen));
         }
@@ -431,6 +458,15 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
     case MlptProtocol::USB_XFER_ISOCHRONOUS: {
         int bufLen = header.dataLen;
         unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        if (!buf) {
+            MlptProtocol::UsbIpHeader resp = header;
+            resp.status = -12;
+            resp.dataLen = 0;
+            emit urbCompleted(m_DeviceId, resp, QByteArray());
+            delete ctx;
+            libusb_free_transfer(xfer);
+            return;
+        }
         if (header.direction == MlptProtocol::USB_DIR_OUT && !data.isEmpty()) {
             memcpy(buf, data.constData(), qMin(static_cast<uint32_t>(data.size()), header.dataLen));
         }
@@ -439,8 +475,10 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
             header.numIsoPackets, transferCallback, ctx, 5000);
 
         // Set ISO packet lengths
-        for (uint32_t i = 0; i < header.numIsoPackets && i < static_cast<uint32_t>(xfer->num_iso_packets); i++) {
-            xfer->iso_packet_desc[i].length = bufLen / header.numIsoPackets;
+        if (header.numIsoPackets > 0) {
+            for (uint32_t i = 0; i < header.numIsoPackets && i < static_cast<uint32_t>(xfer->num_iso_packets); i++) {
+                xfer->iso_packet_desc[i].length = bufLen / header.numIsoPackets;
+            }
         }
         break;
     }

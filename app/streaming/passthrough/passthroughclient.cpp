@@ -320,6 +320,13 @@ void PassthroughClient::onReadyRead()
             return;
         }
 
+        // Reject absurdly large payloads (16 MB limit)
+        if (header.payloadLen > 16 * 1024 * 1024) {
+            qWarning() << "Passthrough: payload too large (" << header.payloadLen << "), dropping connection";
+            m_Socket.disconnectFromHost();
+            return;
+        }
+
         size_t totalSize = MlptProtocol::HEADER_SIZE + header.payloadLen;
         if (static_cast<size_t>(m_ReceiveBuffer.size()) < totalSize) {
             break; // Wait for more data
