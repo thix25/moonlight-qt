@@ -127,6 +127,7 @@ Item {
         session.quitStarting.connect(quitStarting)
         session.sessionFinished.connect(sessionFinished)
         session.readyForDeletion.connect(sessionReadyForDeletion)
+        session.togglePassthrough.connect(togglePassthroughView)
 
         // Kick off the stream
         spinnerTimer.start()
@@ -170,6 +171,9 @@ Item {
             // gamepad usage.
             hintText.text = qsTr("Tip:") + " " + qsTr("Press %1 to disconnect your session").arg(SdlGamepadKeyNavigation.getConnectedGamepads() > 0 ?
                                                   qsTr("Start+Select+L1+R1") : qsTr("Ctrl+Alt+Shift+Q"))
+            if (StreamingPreferences.enablePassthrough) {
+                hintText.text += "\n" + qsTr("Press Ctrl+Alt+Shift+P for device passthrough")
+            }
 
             // Stop GUI gamepad usage now
             SdlGamepadKeyNavigation.disable()
@@ -241,5 +245,46 @@ Item {
         verticalAlignment: Text.AlignVCenter
 
         wrapMode: Text.Wrap
+    }
+
+    // ─── Passthrough overlay ───
+    Loader {
+        id: passthroughOverlay
+        anchors.fill: parent
+        z: 1000
+        active: false
+        visible: active
+
+        sourceComponent: PassthroughView {
+            anchors.fill: parent
+            passthroughClient: session ? session.passthroughClient() : null
+            onCloseRequested: {
+                passthroughOverlay.active = false
+                window.visible = false
+            }
+        }
+    }
+
+    function togglePassthroughView() {
+        if (!session || !session.passthroughClient()) {
+            return
+        }
+        if (passthroughOverlay.active) {
+            passthroughOverlay.active = false
+            window.visible = false
+        } else {
+            window.visible = true
+            passthroughOverlay.active = true
+        }
+    }
+
+    // Keyboard shortcut to toggle passthrough view (Ctrl+Alt+P)
+    Shortcut {
+        sequence: "Ctrl+Alt+P"
+        onActivated: {
+            if (session && session.passthroughClient()) {
+                passthroughOverlay.active = !passthroughOverlay.active
+            }
+        }
     }
 }
