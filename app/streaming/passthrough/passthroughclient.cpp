@@ -1,6 +1,7 @@
 #include "passthroughclient.h"
 #include "usbipexporter.h"
 #include "bthidcapture.h"
+#include "usbipdaemon.h"
 
 #include <QRandomGenerator>
 #include <QtDebug>
@@ -11,6 +12,8 @@ PassthroughClient::PassthroughClient(QObject* parent)
     , m_Connected(false)
     , m_VhciAvailable(false)
     , m_StatusText(tr("Not connected"))
+    , m_Daemon(nullptr)
+    , m_ServerBackend(MlptProtocol::VHCI_BACKEND_LEGACY)
     , m_ReconnectAttempts(0)
 {
     memset(m_SessionId, 0, sizeof(m_SessionId));
@@ -47,6 +50,11 @@ PassthroughClient::~PassthroughClient()
     disconnectFromServer();
     cleanupAllExporters();
     cleanupAllBtCaptures();
+    if (m_Daemon) {
+        m_Daemon->stop();
+        delete m_Daemon;
+        m_Daemon = nullptr;
+    }
 }
 
 void PassthroughClient::connectToServer(const QString& address, uint16_t port)
@@ -75,6 +83,12 @@ void PassthroughClient::disconnectFromServer()
     // Release all forwarded devices back to client
     cleanupAllExporters();
     cleanupAllBtCaptures();
+
+    // Stop USB/IP daemon if running
+    if (m_Daemon) {
+        m_Daemon->stop();
+    }
+    m_ServerBackend = MlptProtocol::VHCI_BACKEND_LEGACY;
 
     if (m_Socket.state() != QAbstractSocket::UnconnectedState) {
         m_Socket.disconnectFromHost();
@@ -128,14 +142,23 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
             return;
         }
 
-        // Connect URB completion signal
-        connect(exporter, &UsbIpExporter::urbCompleted, this,
-            [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
-                Q_UNUSED(devId);
-                QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
-                payload.append(data);
-                sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
-            });
+        if (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 && m_Daemon) {
+            // Win2 mode: register device with the USB/IP daemon.
+            // The VHCI driver will connect directly to our daemon for URB exchange.
+            // No URB routing through MLPT TCP is needed.
+            QString busid = UsbIpDaemon::makeBusid(deviceId);
+            m_Daemon->exportDevice(busid, deviceId, exporter);
+        } else {
+            // Legacy mode: URBs flow through MLPT TCP
+            // Connect URB completion signal to send results over MLPT
+            connect(exporter, &UsbIpExporter::urbCompleted, this,
+                [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+                    Q_UNUSED(devId);
+                    QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+                    payload.append(data);
+                    sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+                });
+        }
 
         // Connect device disconnection signal
         connect(exporter, &UsbIpExporter::deviceDisconnected, this,
@@ -151,7 +174,8 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         sendDeviceAttachWithDescriptors(deviceId, exporter);
 
         qInfo() << "Requested attach for USB device" << deviceId
-                << "(captured with libusb, descriptors sent)";
+                << "(captured with libusb, descriptors sent)"
+                << (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 ? "[win2]" : "[legacy]");
 
     } else if (devInfo->transport == MlptProtocol::TRANSPORT_BLUETOOTH) {
         // Check if this is a HID-capable BT device
@@ -176,14 +200,29 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
             return;
         }
 
-        // Connect URB completion signal
-        connect(capture, &BtHidCapture::urbCompleted, this,
-            [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
-                Q_UNUSED(devId);
-                QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
-                payload.append(data);
-                sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
-            });
+        if (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 && m_Daemon) {
+            // Win2 mode: BT HID also goes through daemon.
+            // BtHidCapture emits urbCompleted like UsbIpExporter.
+            // We need a thin adapter. For now, connect the same way.
+            // Note: BtHidCapture is not a UsbIpExporter, so we can't directly
+            // export it. In win2 mode, BT HID will still use legacy URB relay.
+            connect(capture, &BtHidCapture::urbCompleted, this,
+                [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+                    Q_UNUSED(devId);
+                    QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+                    payload.append(data);
+                    sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+                });
+        } else {
+            // Legacy mode: URBs flow through MLPT TCP
+            connect(capture, &BtHidCapture::urbCompleted, this,
+                [this](uint32_t devId, const MlptProtocol::UsbIpHeader& header, const QByteArray& data) {
+                    Q_UNUSED(devId);
+                    QByteArray payload(reinterpret_cast<const char*>(&header), sizeof(header));
+                    payload.append(data);
+                    sendMessage(MlptProtocol::MSG_USBIP_RETURN, payload);
+                });
+        }
 
         // Connect device disconnection signal
         connect(capture, &BtHidCapture::deviceDisconnected, this,
@@ -461,6 +500,18 @@ void PassthroughClient::sendDeviceAttachWithDescriptors(uint32_t deviceId, UsbIp
     desc.usbDescrDevLen = static_cast<uint16_t>(usbDevDescr.size());
     desc.usbDescrConfLen = static_cast<uint16_t>(usbConfDescr.size());
 
+    // Win2 mode: include daemon port and busid so server can tell driver to connect
+    if (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 && m_Daemon && m_Daemon->isRunning()) {
+        desc.daemonPort = m_Daemon->port();
+        QString busid = UsbIpDaemon::makeBusid(deviceId);
+        QByteArray busidUtf8 = busid.toUtf8();
+        strncpy(desc.busid, busidUtf8.constData(),
+                qMin(static_cast<size_t>(busidUtf8.size()), sizeof(desc.busid) - 1));
+    } else {
+        desc.daemonPort = 0;
+        memset(desc.busid, 0, sizeof(desc.busid));
+    }
+
     QByteArray payload;
     payload.append(reinterpret_cast<const char*>(&desc), sizeof(desc));
     payload.append(nameUtf8.constData(), desc.nameLen);
@@ -505,6 +556,10 @@ void PassthroughClient::sendDeviceAttachWithDescriptors(uint32_t deviceId, BtHid
 
     desc.usbDescrDevLen = static_cast<uint16_t>(usbDevDescr.size());
     desc.usbDescrConfLen = static_cast<uint16_t>(usbConfDescr.size());
+
+    // BT HID always uses legacy mode for URB relay (no USB/IP daemon support yet)
+    desc.daemonPort = 0;
+    memset(desc.busid, 0, sizeof(desc.busid));
 
     QByteArray payload;
     payload.append(reinterpret_cast<const char*>(&desc), sizeof(desc));
@@ -579,6 +634,10 @@ void PassthroughClient::cleanupExporter(uint32_t deviceId)
 {
     auto it = m_Exporters.find(deviceId);
     if (it != m_Exporters.end()) {
+        // Unexport from daemon if in win2 mode
+        if (m_Daemon) {
+            m_Daemon->unexportDevice(UsbIpDaemon::makeBusid(deviceId));
+        }
         (*it)->closeDevice();
         (*it)->deleteLater();
         m_Exporters.erase(it);
@@ -587,6 +646,12 @@ void PassthroughClient::cleanupExporter(uint32_t deviceId)
 
 void PassthroughClient::cleanupAllExporters()
 {
+    if (m_Daemon) {
+        // Unexport all devices from daemon
+        for (auto it = m_Exporters.begin(); it != m_Exporters.end(); ++it) {
+            m_Daemon->unexportDevice(UsbIpDaemon::makeBusid(it.key()));
+        }
+    }
     for (auto* exporter : m_Exporters) {
         exporter->closeDevice();
         exporter->deleteLater();
@@ -623,10 +688,29 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
         }
         auto* ack = reinterpret_cast<const MlptProtocol::HelloAckPayload*>(payload.constData());
         m_VhciAvailable = ack->vhciAvailable != 0;
+        m_ServerBackend = ack->vhciBackend;
         emit vhciAvailableChanged();
 
+        // In win2 mode, start the USB/IP daemon so the VHCI driver can connect to us
+        if (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2) {
+            if (!m_Daemon) {
+                m_Daemon = new UsbIpDaemon(this);
+            }
+            if (!m_Daemon->isRunning()) {
+                if (!m_Daemon->start(0)) {
+                    qWarning() << "Passthrough: failed to start USB/IP daemon";
+                } else {
+                    qInfo() << "Passthrough: USB/IP daemon started on port" << m_Daemon->port();
+                }
+            }
+        }
+
         setConnected(true);
-        setStatusText(tr("Connected%1").arg(m_VhciAvailable ? "" : tr(" (VHCI driver not available)")));
+        const char* backendStr = (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2)
+                                 ? " [win2]" : " [legacy]";
+        setStatusText(tr("Connected%1%2").arg(
+            m_VhciAvailable ? "" : tr(" (VHCI driver not available)"),
+            QString::fromLatin1(backendStr)));
 
         m_KeepaliveTimer.start();
         sendDeviceList();
@@ -637,7 +721,8 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
         // Auto-attach devices marked for auto-forward
         autoAttachDevices();
 
-        qInfo() << "Passthrough: handshake complete, VHCI available:" << m_VhciAvailable;
+        qInfo() << "Passthrough: handshake complete, VHCI available:" << m_VhciAvailable
+                << "backend:" << (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 ? "win2" : "legacy");
         break;
     }
 

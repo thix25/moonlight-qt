@@ -16,22 +16,44 @@
 #endif
 
 // ============================================================================
-// VHCI driver IOCTL codes (from usbip-win usbip_vhci_api.h)
+// VHCI backend enumeration
 // ============================================================================
 
-#define USBIP_VHCI_IOCTL(idx) \
+enum class VhciBackendType {
+    LEGACY,  // Old usbip-win (cezanne): ReadFile/WriteFile URB relay
+    WIN2,    // usbip-win2 (vadimgrn): driver connects to remote USB/IP daemon
+};
+
+// ============================================================================
+// Legacy VHCI driver IOCTL codes (from usbip-win usbip_vhci_api.h)
+// ============================================================================
+
+#define USBIP_VHCI_IOCTL_LEGACY(idx) \
     CTL_CODE(FILE_DEVICE_BUS_EXTENDER, idx, METHOD_BUFFERED, FILE_READ_DATA)
 
-#define IOCTL_USBIP_VHCI_PLUGIN_HARDWARE    USBIP_VHCI_IOCTL(0x0)
-#define IOCTL_USBIP_VHCI_UNPLUG_HARDWARE    USBIP_VHCI_IOCTL(0x1)
-#define IOCTL_USBIP_VHCI_GET_PORTS_STATUS   USBIP_VHCI_IOCTL(0x3)
-
-#define MAX_VHCI_SERIAL_ID 127
-#define MAX_VHCI_PORTS     127
+#define IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x0)
+#define IOCTL_USBIP_VHCI_UNPLUG_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x1)
+#define IOCTL_USBIP_VHCI_GET_PORTS_STATUS_LEGACY   USBIP_VHCI_IOCTL_LEGACY(0x3)
 
 // ============================================================================
-// Native USB/IP protocol header (48 bytes, matches usbip-win driver format)
-// Used for ReadFile/WriteFile on the VHCI device handle.
+// usbip-win2 VHCI IOCTL codes (from usbip-win2 include/usbip/vhci.h)
+// ============================================================================
+
+#define USBIP_VHCI_IOCTL_WIN2(idx) \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, idx, METHOD_BUFFERED, FILE_READ_DATA | FILE_WRITE_DATA)
+
+#define IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_WIN2      USBIP_VHCI_IOCTL_WIN2(0x800)
+#define IOCTL_USBIP_VHCI_PLUGOUT_HARDWARE_WIN2     USBIP_VHCI_IOCTL_WIN2(0x801)
+#define IOCTL_USBIP_VHCI_GET_IMPORTED_DEVICES_WIN2 USBIP_VHCI_IOCTL_WIN2(0x802)
+
+// Shared constants
+#define MAX_VHCI_SERIAL_ID 127
+#define MAX_VHCI_PORTS     127
+#define WIN2_BUS_ID_SIZE   32
+
+// ============================================================================
+// Native USB/IP protocol header (48 bytes, matches both driver formats)
+// Used for ReadFile/WriteFile on the VHCI device handle (legacy mode).
 // ============================================================================
 
 #pragma pack(push, 1)
@@ -96,10 +118,10 @@ struct NativeUsbIpIsoPacketDescriptor {
 };
 
 // ============================================================================
-// VHCI plugin/unplug/status structures
+// Legacy VHCI plugin/unplug/status structures (old usbip-win)
 // ============================================================================
 
-struct VhciPlugInfo {
+struct VhciPlugInfoLegacy {
     unsigned long size;
     unsigned int  devid;
     signed char   port;        // -1 for auto-assign
@@ -108,14 +130,31 @@ struct VhciPlugInfo {
     unsigned char dscr_conf[9]; // Start of config descriptor (variable length follows)
 };
 
-struct VhciUnplugInfo {
+struct VhciUnplugInfoLegacy {
     signed char addr;
     char unused[3];
 };
 
-struct VhciPortsStatus {
+struct VhciPortsStatusLegacy {
     unsigned char n_max_ports;
     unsigned char port_status[MAX_VHCI_PORTS];
+};
+
+// ============================================================================
+// usbip-win2 VHCI plugin/plugout structures (matches include/usbip/vhci.h)
+// ============================================================================
+
+struct Win2PluginHardware {
+    unsigned long size;          // IN: sizeof(this full struct)
+    int           port;          // OUT: assigned port (>= 1) or 0 on error
+    char          busid[WIN2_BUS_ID_SIZE];  // IN: device busid on remote server
+    char          service[32];   // IN: TCP port number as string (e.g. "3240")
+    char          host[1025];    // IN: hostname or IP address
+};
+
+struct Win2PlugoutHardware {
+    unsigned long size;
+    int           port;          // IN: port to unplug (all ports if <= 0)
 };
 
 #pragma pack(pop)
@@ -155,43 +194,59 @@ struct AttachedDevice {
 
 // ============================================================================
 // VhciManager — manages VHCI driver interaction and URB I/O
+// Supports both legacy (usbip-win) and win2 (usbip-win2) backends.
 // ============================================================================
 
 // Callback when the VHCI driver has a URB for us to forward to the client.
 // Parameters: deviceId, pointer to NativeUsbIpHeader + trailing data, total bytes
+// Only used in legacy mode.
 using VhciUrbCallback = std::function<void(uint32_t deviceId,
                                            const uint8_t* data, size_t len)>;
 
 class VhciManager {
 public:
-    VhciManager();
+    // If forceBackend is specified, only that backend is tried.
+    // Otherwise, tries win2 first, falls back to legacy.
+    explicit VhciManager(VhciBackendType forceBackend = VhciBackendType::WIN2);
     ~VhciManager();
 
     bool isDriverAvailable() const;
+    VhciBackendType backend() const { return m_Backend; }
 
     // Set callback for when the VHCI driver produces URBs (CMD_SUBMIT / CMD_UNLINK)
+    // Only effective in legacy mode.
     void setUrbCallback(VhciUrbCallback callback);
 
-    // Attach a device: opens a per-device handle, plugins to VHCI, starts URB read loop
+    // Attach a device — legacy mode (server relays URBs via ReadFile/WriteFile)
     int attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t productId,
                      const uint8_t* deviceDescriptor, size_t deviceDescrLen,
                      const uint8_t* configDescriptor, size_t configDescrLen,
                      const std::string& serial = "");
 
-    // Detach a device: stops URB read loop, unplugs from VHCI, closes handle
+    // Attach a device — win2 mode (driver connects to remote USB/IP daemon)
+    int attachDeviceWin2(uint32_t deviceId,
+                         const std::string& clientHost,
+                         uint16_t clientDaemonPort,
+                         const std::string& busid);
+
+    // Detach a device (works for both backends)
     bool detachDevice(uint32_t deviceId);
 
     // Feed a URB return (RET_SUBMIT) from the client back to the VHCI driver
+    // Only used in legacy mode.
     bool feedUrbReturn(uint32_t deviceId, const uint8_t* data, size_t len);
 
     int getAttachedCount() const;
 
     // Get the USB transfer type for a given endpoint address on a device
     // Returns: 0=control, 1=iso, 2=bulk, 3=interrupt, -1=unknown
+    // Only meaningful in legacy mode.
     int getEndpointType(uint32_t deviceId, uint8_t endpointAddress) const;
 
 private:
     bool discoverVhciPath();
+    bool discoverVhciPathLegacy();
+    bool discoverVhciPathWin2();
 
 #ifdef _WIN32
     HANDLE openNewVhciHandle();
@@ -205,6 +260,7 @@ private:
 
     std::wstring m_VhciDevicePath;
     bool m_DriverAvailable;
+    VhciBackendType m_Backend;
 
     VhciUrbCallback m_UrbCallback;
 

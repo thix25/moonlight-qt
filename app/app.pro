@@ -204,6 +204,7 @@ SOURCES += \
     streaming/passthrough/passthroughclient.cpp \
     streaming/passthrough/deviceenumerator.cpp \
     streaming/passthrough/usbipexporter.cpp \
+    streaming/passthrough/usbipdaemon.cpp \
     streaming/passthrough/bthidcapture.cpp \
     gui/computermodel.cpp \
     gui/appmodel.cpp \
@@ -247,6 +248,7 @@ HEADERS += \
     streaming/passthrough/passthroughclient.h \
     streaming/passthrough/deviceenumerator.h \
     streaming/passthrough/usbipexporter.h \
+    streaming/passthrough/usbipdaemon.h \
     streaming/passthrough/bthidcapture.h \
     gui/computermodel.h \
     gui/appmodel.h \
