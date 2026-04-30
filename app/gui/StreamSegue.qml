@@ -1,4 +1,4 @@
-import QtQuick 2.0
+import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Window 2.2
 
@@ -255,12 +255,19 @@ Item {
         active: false
         visible: active
 
-        sourceComponent: PassthroughView {
-            anchors.fill: parent
-            passthroughClient: session ? session.passthroughClient() : null
-            onCloseRequested: {
-                passthroughOverlay.active = false
-                window.visible = false
+        // Use source URL instead of sourceComponent to isolate
+        // PassthroughView errors from preventing StreamSegue from loading
+        source: active ? "PassthroughView.qml" : ""
+
+        onLoaded: {
+            if (item) {
+                item.passthroughClient = Qt.binding(function() {
+                    return session ? session.passthroughClient() : null;
+                });
+                item.closeRequested.connect(function() {
+                    passthroughOverlay.active = false;
+                    window.visible = false;
+                });
             }
         }
     }

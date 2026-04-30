@@ -456,11 +456,19 @@ Item {
                     }
 
                     var component = Qt.createComponent("StreamSegue.qml")
+                    if (component.status === Component.Error) {
+                        console.error("Failed to load StreamSegue.qml:", component.errorString())
+                        return
+                    }
                     var segue = component.createObject(stackView, {
                                                            "appName": model.name,
                                                            "session": appModel.createSessionForApp(index),
                                                            "isResume": runningId === model.appid
                                                        })
+                    if (!segue) {
+                        console.error("Failed to create StreamSegue object")
+                        return
+                    }
                     stackView.push(segue)
                 }
 
@@ -746,11 +754,19 @@ Item {
         }
 
         var component = Qt.createComponent("StreamSegue.qml")
+        if (component.status === Component.Error) {
+            console.error("Failed to load StreamSegue.qml:", component.errorString())
+            return
+        }
         var segue = component.createObject(stackView, {
                                                "appName": appName,
                                                "session": appModel.createSessionForApp(appIndex),
                                                "isResume": runningId === appId
                                            })
+        if (!segue) {
+            console.error("Failed to create StreamSegue object")
+            return
+        }
         stackView.push(segue)
     }
 

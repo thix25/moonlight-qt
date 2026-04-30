@@ -721,6 +721,7 @@ Item {
 
                         // Section header (clickable to collapse/expand)
                         Rectangle {
+                            id: sectionHeaderRect
                             width: parent.width
                             height: 40
                             color: "transparent"
@@ -748,7 +749,7 @@ Item {
                                 Canvas {
                                     width: 16
                                     height: 16
-                                    property bool collapsed: isCollapsed
+                                    property bool collapsed: sectionHeaderRect.isCollapsed
                                     property color arrowColor: sectionName === qsTr("Online") ? "#4CAF50" :
                                            sectionName === qsTr("Not Paired") ? "#FF9800" : "#9E9E9E"
                                     onCollapsedChanged: requestPaint()

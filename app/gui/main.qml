@@ -72,16 +72,20 @@ ApplicationWindow {
     // It would be better to use TextMetrics here, but it always lays out
     // the text slightly more compactly than real Text does in ToolTip,
     // causing unexpected line breaks to be inserted
-    Text {
-        id: tooltipTextLayoutHelper
+    Item {
+        id: tooltipConfigurator
         visible: false
-        font: ToolTip.toolTip.font
-        text: ToolTip.toolTip.text
-    }
 
-    // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
-    // it will never insert a line break and just extend on forever.
-    ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
+        Text {
+            id: tooltipTextLayoutHelper
+            font: ToolTip.toolTip.font
+            text: ToolTip.toolTip.text
+        }
+
+        // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
+        // it will never insert a line break and just extend on forever.
+        ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
+    }
 
     function goBack() {
         if (clearOnBack) {
@@ -315,7 +319,7 @@ ApplicationWindow {
 
                 Shortcut {
                     id: newPcShortcut
-                    sequence: StandardKey.New
+                    sequences: [StandardKey.New]
                     onActivated: addPcButton.clicked()
                 }
 
@@ -379,7 +383,7 @@ ApplicationWindow {
 
                 Shortcut {
                     id: helpShortcut
-                    sequence: StandardKey.HelpContents
+                    sequences: [StandardKey.HelpContents]
                     onActivated: helpButton.clicked()
                 }
 
@@ -422,7 +426,7 @@ ApplicationWindow {
 
                 Shortcut {
                     id: settingsShortcut
-                    sequence: StandardKey.Preferences
+                    sequences: [StandardKey.Preferences]
                     onActivated: settingsButton.clicked()
                 }
 
