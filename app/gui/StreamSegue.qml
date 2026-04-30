@@ -285,13 +285,10 @@ Item {
         }
     }
 
-    // Keyboard shortcut to toggle passthrough view (Ctrl+Alt+P)
+    // Keyboard shortcut to toggle passthrough view (Ctrl+Alt+Shift+P)
+    // Must call togglePassthroughView() so window visibility is managed correctly.
     Shortcut {
-        sequence: "Ctrl+Alt+P"
-        onActivated: {
-            if (session && session.passthroughClient()) {
-                passthroughOverlay.active = !passthroughOverlay.active
-            }
-        }
+        sequence: "Ctrl+Alt+Shift+P"
+        onActivated: togglePassthroughView()
     }
 }
