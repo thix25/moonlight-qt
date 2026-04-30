@@ -18,13 +18,19 @@ PassthroughServer::~PassthroughServer()
 bool PassthroughServer::start(const ServerConfig& config)
 {
     m_Config = config;
-    m_Config.vhciAvailable = m_VhciManager.isDriverAvailable();
 
-    // Set up the VHCI URB callback — called from per-device read threads
-    m_VhciManager.setUrbCallback(
-        [this](uint32_t deviceId, const uint8_t* data, size_t len) {
-            forwardVhciUrbToClient(deviceId, data, len);
-        });
+    // Initialize VhciManager with the desired backend
+    m_VhciManager = std::make_unique<VhciManager>(config.forceBackend);
+    m_Config.vhciAvailable = m_VhciManager->isDriverAvailable();
+
+    // Set up the VHCI URB callback — only needed in legacy mode where
+    // the server relays URBs. In win2 mode, the driver handles URBs directly.
+    if (m_VhciManager->backend() == VhciBackendType::LEGACY) {
+        m_VhciManager->setUrbCallback(
+            [this](uint32_t deviceId, const uint8_t* data, size_t len) {
+                forwardVhciUrbToClient(deviceId, data, len);
+            });
+    }
 
     m_ListenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_ListenSocket == INVALID_SOCKET) {
@@ -181,7 +187,7 @@ void PassthroughServer::clientLoop(ClientConnection* client)
         }
         for (uint32_t devId : toDetach) {
             m_DeviceOwners.erase(devId);
-            m_VhciManager.detachDevice(devId);
+            m_VhciManager->detachDevice(devId);
             log("Auto-detached device " + std::to_string(devId) + " (client disconnected)");
         }
     }
@@ -292,6 +298,9 @@ void PassthroughServer::handleHello(ClientConnection* client,
     MlptProtocol::HelloAckPayload ack{};
     ack.serverVersion = MlptProtocol::VERSION;
     ack.vhciAvailable = m_Config.vhciAvailable ? 1 : 0;
+    ack.vhciBackend = (m_VhciManager && m_VhciManager->backend() == VhciBackendType::WIN2)
+                      ? MlptProtocol::VHCI_BACKEND_WIN2
+                      : MlptProtocol::VHCI_BACKEND_LEGACY;
     memset(ack.reserved, 0, sizeof(ack.reserved));
 
     sendMessage(client, MlptProtocol::MSG_HELLO_ACK, &ack, sizeof(ack));
@@ -373,10 +382,43 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
     MlptProtocol::DeviceAttachAckPayload ack{};
     ack.deviceId = desc->deviceId;
 
-    if (!m_VhciManager.isDriverAvailable()) {
+    if (!m_VhciManager->isDriverAvailable()) {
         ack.status = MlptProtocol::ATTACH_ERR_DRIVER;
         ack.vhciPort = 0;
         log("  -> Failed: VHCI driver not available");
+    } else if (m_VhciManager->backend() == VhciBackendType::WIN2) {
+        // Win2 mode: driver connects to client's USB/IP daemon directly
+        if (desc->daemonPort == 0) {
+            ack.status = MlptProtocol::ATTACH_ERR_FAILED;
+            ack.vhciPort = 0;
+            log("  -> Failed: client did not provide daemon port (win2 mode)");
+        } else {
+            std::string busid(desc->busid, strnlen(desc->busid, sizeof(desc->busid)));
+            int port = m_VhciManager->attachDeviceWin2(
+                desc->deviceId,
+                client->address,
+                desc->daemonPort,
+                busid);
+
+            if (port >= 0) {
+                ack.status = MlptProtocol::ATTACH_OK;
+                ack.vhciPort = static_cast<uint8_t>(port);
+
+                {
+                    std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+                    m_DeviceOwners[desc->deviceId] = client;
+                }
+
+                log("  -> Win2: Attached on VHCI port " + std::to_string(port) +
+                    " (driver connecting to " + client->address + ":" +
+                    std::to_string(desc->daemonPort) + ")");
+                notifyStatusChange();
+            } else {
+                ack.status = MlptProtocol::ATTACH_ERR_FAILED;
+                ack.vhciPort = 0;
+                log("  -> Failed: Win2 VHCI plugin failed");
+            }
+        }
     } else if (!usbDevDescr || !usbConfDescr) {
         ack.status = MlptProtocol::ATTACH_ERR_FAILED;
         ack.vhciPort = 0;
@@ -385,7 +427,7 @@ void PassthroughServer::handleDeviceAttach(ClientConnection* client,
         std::string serial(desc->serialNumber,
             strnlen(desc->serialNumber, sizeof(desc->serialNumber)));
 
-        int port = m_VhciManager.attachDevice(
+        int port = m_VhciManager->attachDevice(
             desc->deviceId, desc->vendorId, desc->productId,
             usbDevDescr, usbDevDescrLen,
             usbConfDescr, usbConfDescrLen,
@@ -434,7 +476,7 @@ void PassthroughServer::handleDeviceDetach(ClientConnection* client,
         }
     }
 
-    m_VhciManager.detachDevice(req->deviceId);
+    m_VhciManager->detachDevice(req->deviceId);
 
     {
         std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
@@ -494,7 +536,7 @@ void PassthroughServer::forwardVhciUrbToClient(uint32_t deviceId,
             if (native->base.direction == 1) {
                 epAddr |= 0x80; // IN direction bit
             }
-            int epType = m_VhciManager.getEndpointType(deviceId, epAddr);
+            int epType = m_VhciManager->getEndpointType(deviceId, epAddr);
             if (epType >= 0) {
                 mlptHdr.transferType = static_cast<uint8_t>(epType);
             } else {
@@ -585,7 +627,7 @@ void PassthroughServer::handleUsbIpReturn(ClientConnection* client,
         memcpy(writeBuffer.data() + sizeof(native), responseData, responseDataLen);
     }
 
-    if (!m_VhciManager.feedUrbReturn(mlptHdr->deviceId,
+    if (!m_VhciManager->feedUrbReturn(mlptHdr->deviceId,
                                       writeBuffer.data(), writeBuffer.size())) {
         log("Failed to feed URB return for device " + std::to_string(mlptHdr->deviceId) +
             " seq=" + std::to_string(mlptHdr->seqNum));

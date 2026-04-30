@@ -44,16 +44,19 @@ void printUsage(const char* argv0)
     printf("Usage: %s [options]\n\n", argv0);
     printf("Options:\n");
     printf("  --port N     Listen port (default: %d)\n", MlptProtocol::DEFAULT_PORT);
+    printf("  --legacy     Force legacy usbip-win backend (ReadFile/WriteFile URB relay)\n");
     printf("  --no-tray    Run without system tray icon\n");
     printf("  --help       Show this help\n");
-    printf("\nThe server listens for connections from Moonlight clients and\n");
-    printf("creates virtual USB devices via the VHCI driver.\n");
+    printf("\nBy default, the server tries usbip-win2 first, then falls back to legacy.\n");
+    printf("In usbip-win2 mode, the VHCI driver connects directly to the client's\n");
+    printf("USB/IP daemon — no URB relay in the server process.\n");
 }
 
 int main(int argc, char* argv[])
 {
     uint16_t port = MlptProtocol::DEFAULT_PORT;
     bool enableTray = true;
+    VhciBackendType forceBackend = VhciBackendType::WIN2;  // default: try win2 first
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -61,6 +64,8 @@ int main(int argc, char* argv[])
             port = static_cast<uint16_t>(atoi(argv[++i]));
         } else if (strcmp(argv[i], "--no-tray") == 0) {
             enableTray = false;
+        } else if (strcmp(argv[i], "--legacy") == 0) {
+            forceBackend = VhciBackendType::LEGACY;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printUsage(argv[0]);
             return 0;
@@ -87,6 +92,7 @@ int main(int argc, char* argv[])
 
     ServerConfig config;
     config.port = port;
+    config.forceBackend = forceBackend;
 
     printf("===========================================\n");
     printf(" Moonlight Passthrough Server v%d.%d\n",

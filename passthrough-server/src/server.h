@@ -33,6 +33,7 @@ struct ClientConnection {
 struct ServerConfig {
     uint16_t port = MlptProtocol::DEFAULT_PORT;
     bool vhciAvailable = false;
+    VhciBackendType forceBackend = VhciBackendType::WIN2;  // default: try win2 first
 };
 
 class PassthroughServer {
@@ -91,7 +92,7 @@ private:
     mutable std::mutex m_DeviceOwnersMutex;
     std::unordered_map<uint32_t, ClientConnection*> m_DeviceOwners;
 
-    VhciManager m_VhciManager;
+    std::unique_ptr<VhciManager> m_VhciManager;
 
     LogCallback m_LogCallback;
     StatusCallback m_StatusCallback;

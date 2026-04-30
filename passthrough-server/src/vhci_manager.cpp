@@ -9,8 +9,13 @@
 #include <initguid.h>
 #pragma comment(lib, "setupapi.lib")
 
-DEFINE_GUID(GUID_DEVINTERFACE_VHCI_USBIP,
+// Legacy GUID (old usbip-win by cezanne)
+DEFINE_GUID(GUID_DEVINTERFACE_VHCI_USBIP_LEGACY,
     0xD35F7840, 0x6A0C, 0x11D2, 0xB8, 0x41, 0x00, 0xC0, 0x4F, 0xAD, 0x51, 0x71);
+
+// Win2 GUID (usbip-win2 by vadimgrn — standard USB Host Controller interface)
+DEFINE_GUID(GUID_DEVINTERFACE_USB_HOST_CONTROLLER_WIN2,
+    0xB4030C06, 0xDC5F, 0x4FCC, 0x87, 0xEB, 0xE5, 0x51, 0x5A, 0x09, 0x35, 0xC0);
 #endif
 
 // Maximum buffer for ReadFile — header + up to 1MB data
@@ -20,14 +25,16 @@ static constexpr size_t VHCI_READ_BUFFER_SIZE = sizeof(NativeUsbIpHeader) + (102
 // Constructor / Destructor
 // ============================================================================
 
-VhciManager::VhciManager()
+VhciManager::VhciManager(VhciBackendType forceBackend)
     : m_DriverAvailable(false)
+    , m_Backend(forceBackend)
 {
     m_DriverAvailable = discoverVhciPath();
     if (m_DriverAvailable) {
-        printf("[VHCI] Driver found and opened successfully\n");
+        const char* backendName = (m_Backend == VhciBackendType::WIN2) ? "usbip-win2" : "legacy (usbip-win)";
+        printf("[VHCI] Driver found (%s) and opened successfully\n", backendName);
     } else {
-        printf("[VHCI] Driver not available (usbip-win VHCI not installed?)\n");
+        printf("[VHCI] Driver not available (no VHCI driver installed)\n");
     }
 }
 
@@ -54,19 +61,34 @@ void VhciManager::setUrbCallback(VhciUrbCallback callback)
 }
 
 // ============================================================================
-// VHCI device path discovery
+// VHCI device path discovery (dual-mode)
 // ============================================================================
 
 #ifdef _WIN32
 
 bool VhciManager::discoverVhciPath()
 {
+    // Try the requested backend first
+    if (m_Backend == VhciBackendType::WIN2) {
+        if (discoverVhciPathWin2()) return true;
+        printf("[VHCI] usbip-win2 not found, trying legacy...\n");
+        m_Backend = VhciBackendType::LEGACY;
+        return discoverVhciPathLegacy();
+    } else {
+        if (discoverVhciPathLegacy()) return true;
+        printf("[VHCI] Legacy driver not found, trying usbip-win2...\n");
+        m_Backend = VhciBackendType::WIN2;
+        return discoverVhciPathWin2();
+    }
+}
+
+bool VhciManager::discoverVhciPathLegacy()
+{
     HDEVINFO devInfo = SetupDiGetClassDevsW(
-        &GUID_DEVINTERFACE_VHCI_USBIP, nullptr, nullptr,
+        &GUID_DEVINTERFACE_VHCI_USBIP_LEGACY, nullptr, nullptr,
         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
     if (devInfo == INVALID_HANDLE_VALUE) {
-        printf("[VHCI] SetupDiGetClassDevs failed: %lu\n", GetLastError());
         return false;
     }
 
@@ -74,8 +96,7 @@ bool VhciManager::discoverVhciPath()
     ifData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
     if (!SetupDiEnumDeviceInterfaces(devInfo, nullptr,
-            &GUID_DEVINTERFACE_VHCI_USBIP, 0, &ifData)) {
-        printf("[VHCI] No VHCI device interface found: %lu\n", GetLastError());
+            &GUID_DEVINTERFACE_VHCI_USBIP_LEGACY, 0, &ifData)) {
         SetupDiDestroyDeviceInfoList(devInfo);
         return false;
     }
@@ -91,23 +112,20 @@ bool VhciManager::discoverVhciPath()
     detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
     if (!SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, detailData, requiredSize, nullptr, nullptr)) {
-        printf("[VHCI] Failed to get device interface detail: %lu\n", GetLastError());
         free(detailData);
         SetupDiDestroyDeviceInfoList(devInfo);
         return false;
     }
 
     m_VhciDevicePath = detailData->DevicePath;
-    printf("[VHCI] Device path: %ls\n", m_VhciDevicePath.c_str());
+    printf("[VHCI] Legacy device path: %ls\n", m_VhciDevicePath.c_str());
 
-    // Verify we can actually open the device
     HANDLE testHandle = CreateFileW(m_VhciDevicePath.c_str(),
         GENERIC_READ | GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr, OPEN_EXISTING, 0, nullptr);
 
     if (testHandle == INVALID_HANDLE_VALUE) {
-        printf("[VHCI] Failed to open VHCI device: %lu\n", GetLastError());
         free(detailData);
         SetupDiDestroyDeviceInfoList(devInfo);
         return false;
@@ -117,6 +135,73 @@ bool VhciManager::discoverVhciPath()
     free(detailData);
     SetupDiDestroyDeviceInfoList(devInfo);
     return true;
+}
+
+bool VhciManager::discoverVhciPathWin2()
+{
+    // Enumerate all USB Host Controller interfaces and find the usbip-win2 one
+    HDEVINFO devInfo = SetupDiGetClassDevsW(
+        &GUID_DEVINTERFACE_USB_HOST_CONTROLLER_WIN2, nullptr, nullptr,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+
+    if (devInfo == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    SP_DEVICE_INTERFACE_DATA ifData = {};
+    ifData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+    // Iterate all USB host controller interfaces to find the usbip-win2 one
+    for (DWORD idx = 0;
+         SetupDiEnumDeviceInterfaces(devInfo, nullptr,
+             &GUID_DEVINTERFACE_USB_HOST_CONTROLLER_WIN2, idx, &ifData);
+         idx++)
+    {
+        DWORD requiredSize = 0;
+        SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, nullptr, 0, &requiredSize, nullptr);
+
+        auto* detailData = static_cast<PSP_DEVICE_INTERFACE_DETAIL_DATA_W>(malloc(requiredSize));
+        if (!detailData) continue;
+        detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+        SP_DEVINFO_DATA devInfoData = {};
+        devInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+        if (!SetupDiGetDeviceInterfaceDetailW(devInfo, &ifData, detailData,
+                requiredSize, nullptr, &devInfoData)) {
+            free(detailData);
+            continue;
+        }
+
+        // Check if this is the usbip-win2 device by checking the hardware ID
+        wchar_t hwId[256] = {};
+        if (SetupDiGetDeviceRegistryPropertyW(devInfo, &devInfoData,
+                SPDRP_HARDWAREID, nullptr, reinterpret_cast<BYTE*>(hwId),
+                sizeof(hwId), nullptr)) {
+            // usbip-win2 hardware ID: ROOT\USBIP_WIN2\UDE
+            if (wcsstr(hwId, L"USBIP_WIN2") != nullptr) {
+                m_VhciDevicePath = detailData->DevicePath;
+                printf("[VHCI] Win2 device path: %ls\n", m_VhciDevicePath.c_str());
+
+                HANDLE testHandle = CreateFileW(m_VhciDevicePath.c_str(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    nullptr, OPEN_EXISTING, 0, nullptr);
+
+                if (testHandle != INVALID_HANDLE_VALUE) {
+                    CloseHandle(testHandle);
+                    free(detailData);
+                    SetupDiDestroyDeviceInfoList(devInfo);
+                    return true;
+                }
+            }
+        }
+
+        free(detailData);
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfo);
+    return false;
 }
 
 HANDLE VhciManager::openNewVhciHandle()
@@ -149,6 +234,11 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
                                const std::string& serial)
 {
 #ifdef _WIN32
+    if (m_Backend != VhciBackendType::LEGACY) {
+        printf("[VHCI] attachDevice (legacy) called but backend is win2\n");
+        return -1;
+    }
+
     std::lock_guard<std::mutex> lock(m_Mutex);
 
     if (!m_DriverAvailable) {
@@ -178,8 +268,8 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
     }
 
     // Build plugin info
-    size_t pluginfoSize = sizeof(VhciPlugInfo) + configDescrLen - 9;
-    auto* pluginfo = static_cast<VhciPlugInfo*>(calloc(1, pluginfoSize));
+    size_t pluginfoSize = sizeof(VhciPlugInfoLegacy) + configDescrLen - 9;
+    auto* pluginfo = static_cast<VhciPlugInfoLegacy*>(calloc(1, pluginfoSize));
     if (!pluginfo) {
         CloseHandle(devHandle);
         return -1;
@@ -202,7 +292,7 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
     // Plugin via IOCTL on the per-device handle
     DWORD bytesReturned;
     BOOL result = DeviceIoControl(devHandle,
-        IOCTL_USBIP_VHCI_PLUGIN_HARDWARE,
+        IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_LEGACY,
         pluginfo, static_cast<DWORD>(pluginfoSize),
         pluginfo, static_cast<DWORD>(pluginfoSize),
         &bytesReturned, nullptr);
@@ -257,6 +347,100 @@ int VhciManager::attachDevice(uint32_t deviceId, uint16_t vendorId, uint16_t pro
 #endif
 }
 
+int VhciManager::attachDeviceWin2(uint32_t deviceId,
+                                   const std::string& clientHost,
+                                   uint16_t clientDaemonPort,
+                                   const std::string& busid)
+{
+#ifdef _WIN32
+    if (m_Backend != VhciBackendType::WIN2) {
+        printf("[VHCI] attachDeviceWin2 called but backend is legacy\n");
+        return -1;
+    }
+
+    std::lock_guard<std::mutex> lock(m_Mutex);
+
+    if (!m_DriverAvailable) {
+        printf("[VHCI] Cannot attach: driver not available\n");
+        return -1;
+    }
+
+    if (m_AttachedDevices.count(deviceId)) {
+        printf("[VHCI] Device %u already attached on port %d\n",
+               deviceId, m_AttachedDevices[deviceId]->vhciPort);
+        return m_AttachedDevices[deviceId]->vhciPort;
+    }
+
+    // Open a VHCI handle for this operation
+    HANDLE devHandle = openNewVhciHandle();
+    if (devHandle == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+
+    // Build win2 plugin_hardware struct
+    Win2PluginHardware pluginfo = {};
+    pluginfo.size = sizeof(pluginfo);
+    pluginfo.port = 0; // OUT: will be filled by driver
+
+    strncpy_s(pluginfo.busid, sizeof(pluginfo.busid), busid.c_str(), _TRUNCATE);
+
+    // Convert daemon port to string for "service" field
+    char portStr[32];
+    snprintf(portStr, sizeof(portStr), "%u", clientDaemonPort);
+    strncpy_s(pluginfo.service, sizeof(pluginfo.service), portStr, _TRUNCATE);
+
+    strncpy_s(pluginfo.host, sizeof(pluginfo.host), clientHost.c_str(), _TRUNCATE);
+
+    printf("[VHCI] Win2 plugin: host=%s, service=%s, busid=%s\n",
+           pluginfo.host, pluginfo.service, pluginfo.busid);
+
+    // Issue PLUGIN_HARDWARE IOCTL — the driver will connect to the client's
+    // USB/IP daemon at host:service and import the device with the given busid
+    DWORD bytesReturned;
+    // Output only needs the base size + port field
+    constexpr DWORD outLen = offsetof(Win2PluginHardware, port) + sizeof(pluginfo.port);
+
+    BOOL result = DeviceIoControl(devHandle,
+        IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_WIN2,
+        &pluginfo, sizeof(pluginfo),
+        &pluginfo, outLen,
+        &bytesReturned, nullptr);
+
+    if (!result) {
+        printf("[VHCI] Win2 PLUGIN IOCTL failed: %lu\n", GetLastError());
+        CloseHandle(devHandle);
+        return -1;
+    }
+
+    int assignedPort = pluginfo.port;
+    if (assignedPort <= 0) {
+        printf("[VHCI] Win2: No port assigned (port=%d)\n", assignedPort);
+        CloseHandle(devHandle);
+        return -1;
+    }
+
+    // Create AttachedDevice — in win2 mode, no read thread is needed
+    // The driver handles URB transport directly via WSK
+    auto dev = std::make_unique<AttachedDevice>();
+    dev->deviceId = deviceId;
+    dev->vendorId = 0;   // Not known until driver imports
+    dev->productId = 0;
+    dev->vhciPort = assignedPort;
+    dev->deviceHandle = devHandle;
+    dev->readRunning = false;  // No read loop in win2 mode
+
+    m_AttachedDevices[deviceId] = std::move(dev);
+
+    printf("[VHCI] Win2: Device %u attached on port %d (driver connects to %s:%u)\n",
+           deviceId, assignedPort, clientHost.c_str(), clientDaemonPort);
+    return assignedPort;
+
+#else
+    (void)deviceId; (void)clientHost; (void)clientDaemonPort; (void)busid;
+    return -1;
+#endif
+}
+
 bool VhciManager::detachDevice(uint32_t deviceId)
 {
 #ifdef _WIN32
@@ -273,21 +457,33 @@ bool VhciManager::detachDevice(uint32_t deviceId)
         m_AttachedDevices.erase(it);
     }
 
-    // Stop the read thread
-    dev->readRunning = false;
-    if (dev->readThread.joinable()) {
-        // Cancel any pending synchronous I/O on the read thread
-        CancelSynchronousIo(dev->readThread.native_handle());
-        dev->readThread.join();
+    // Stop the read thread (legacy mode only)
+    if (dev->readRunning) {
+        dev->readRunning = false;
+        if (dev->readThread.joinable()) {
+            CancelSynchronousIo(dev->readThread.native_handle());
+            dev->readThread.join();
+        }
     }
 
     // Unplug from VHCI
     if (dev->deviceHandle != INVALID_HANDLE_VALUE) {
-        VhciUnplugInfo unplug = {};
-        unplug.addr = static_cast<signed char>(dev->vhciPort);
-        DWORD bytesReturned;
-        DeviceIoControl(dev->deviceHandle, IOCTL_USBIP_VHCI_UNPLUG_HARDWARE,
-            &unplug, sizeof(unplug), nullptr, 0, &bytesReturned, nullptr);
+        if (m_Backend == VhciBackendType::WIN2) {
+            // Win2: use plugout_hardware IOCTL with port number
+            Win2PlugoutHardware plugout = {};
+            plugout.size = sizeof(plugout);
+            plugout.port = dev->vhciPort;
+            DWORD bytesReturned;
+            DeviceIoControl(dev->deviceHandle, IOCTL_USBIP_VHCI_PLUGOUT_HARDWARE_WIN2,
+                &plugout, sizeof(plugout), nullptr, 0, &bytesReturned, nullptr);
+        } else {
+            // Legacy: use unplug_hardware IOCTL with port address
+            VhciUnplugInfoLegacy unplug = {};
+            unplug.addr = static_cast<signed char>(dev->vhciPort);
+            DWORD bytesReturned;
+            DeviceIoControl(dev->deviceHandle, IOCTL_USBIP_VHCI_UNPLUG_HARDWARE_LEGACY,
+                &unplug, sizeof(unplug), nullptr, 0, &bytesReturned, nullptr);
+        }
 
         CloseHandle(dev->deviceHandle);
         dev->deviceHandle = INVALID_HANDLE_VALUE;

@@ -12,6 +12,7 @@
 
 class UsbIpExporter;
 class BtHidCapture;
+class UsbIpDaemon;
 
 class PassthroughClient : public QObject
 {
@@ -98,6 +99,10 @@ private:
 
     // Active BT HID captures: deviceId → BtHidCapture*
     QHash<uint32_t, BtHidCapture*> m_BtCaptures;
+
+    // Win2 mode: USB/IP daemon for direct driver connections
+    UsbIpDaemon* m_Daemon;
+    uint8_t m_ServerBackend;  // MlptProtocol::VhciBackend
 
     int m_ReconnectAttempts;
     static constexpr int MAX_RECONNECT_ATTEMPTS = 5;

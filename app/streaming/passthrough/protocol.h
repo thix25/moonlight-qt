@@ -68,6 +68,12 @@ enum AttachStatus : uint8_t {
     ATTACH_ERR_FAILED   = 0x03,  // Generic failure
 };
 
+// VHCI backend type (server tells client which driver is installed)
+enum VhciBackend : uint8_t {
+    VHCI_BACKEND_LEGACY = 0x00,  // Old usbip-win (cezanne): server relays URBs
+    VHCI_BACKEND_WIN2   = 0x01,  // usbip-win2 (vadimgrn): driver connects directly
+};
+
 // USB transfer types (matches USB spec)
 enum UsbTransferType : uint8_t {
     USB_XFER_CONTROL     = 0,
@@ -108,7 +114,8 @@ struct HelloPayload {
 struct HelloAckPayload {
     uint16_t serverVersion;
     uint8_t  vhciAvailable;  // 1 if VHCI driver is loaded
-    uint8_t  reserved[5];
+    uint8_t  vhciBackend;    // VhciBackend: 0=legacy, 1=win2
+    uint8_t  reserved[4];
 };
 
 // Device descriptor sent in MSG_DEVICE_LIST and MSG_DEVICE_ATTACH
@@ -126,6 +133,9 @@ struct DeviceDescriptor {
     char     serialNumber[32]; // Null-terminated serial (or empty)
     uint16_t usbDescrDevLen;  // Length of USB device descriptor (18 for standard)
     uint16_t usbDescrConfLen; // Length of full USB configuration descriptor
+    // Win2 mode fields (ignored by legacy server, set to 0 in legacy mode):
+    uint16_t daemonPort;      // TCP port where client's USB/IP daemon listens (0 = legacy mode)
+    char     busid[32];       // USB/IP busid for OP_REQ_IMPORT (empty = legacy mode)
     // Followed by: nameLen bytes of name, usbDescrDevLen bytes, usbDescrConfLen bytes
 };
 
