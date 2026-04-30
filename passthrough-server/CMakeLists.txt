@@ -17,6 +17,8 @@ add_executable(mlpt-server
     src/systray.cpp
 )
 
+target_compile_definitions(mlpt-server PRIVATE UNICODE _UNICODE)
+
 # Include the shared protocol header directory
 target_include_directories(mlpt-server PRIVATE
     ${CMAKE_SOURCE_DIR}/../app/streaming/passthrough
