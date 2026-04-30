@@ -31,9 +31,9 @@ enum class VhciBackendType {
 #define USBIP_VHCI_IOCTL_LEGACY(idx) \
     CTL_CODE(FILE_DEVICE_BUS_EXTENDER, idx, METHOD_BUFFERED, FILE_READ_DATA)
 
-#define IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x800)
-#define IOCTL_USBIP_VHCI_UNPLUG_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x801)
-#define IOCTL_USBIP_VHCI_GET_PORTS_STATUS_LEGACY   USBIP_VHCI_IOCTL_LEGACY(0x803)
+#define IOCTL_USBIP_VHCI_PLUGIN_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x0)
+#define IOCTL_USBIP_VHCI_UNPLUG_HARDWARE_LEGACY    USBIP_VHCI_IOCTL_LEGACY(0x1)
+#define IOCTL_USBIP_VHCI_GET_PORTS_STATUS_LEGACY   USBIP_VHCI_IOCTL_LEGACY(0x3)
 
 // ============================================================================
 // usbip-win2 VHCI IOCTL codes (from usbip-win2 include/usbip/vhci.h)
@@ -117,8 +117,11 @@ struct NativeUsbIpIsoPacketDescriptor {
     uint32_t status;
 };
 
+#pragma pack(pop)
+
 // ============================================================================
 // Legacy VHCI plugin/unplug/status structures (old usbip-win)
+// These use natural alignment (no #pragma pack) to match cezanne's driver.
 // ============================================================================
 
 struct VhciPlugInfoLegacy {
@@ -156,8 +159,6 @@ struct Win2PlugoutHardware {
     unsigned long size;
     int           port;          // IN: port to unplug (all ports if <= 0)
 };
-
-#pragma pack(pop)
 
 // ============================================================================
 // AttachedDevice — per-device state including VHCI handle and I/O thread
