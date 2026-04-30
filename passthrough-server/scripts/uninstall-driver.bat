@@ -21,7 +21,7 @@ set "PS=powershell -NoProfile -ExecutionPolicy Bypass -Command"
 echo Step 1: Removing usbip / VHCI device instances...
 %PS% ^
 "$ErrorActionPreference='SilentlyContinue';" ^
-"$devs = Get-PnpDevice | Where-Object { ($_.FriendlyName -match 'usbip|USB/IP|VHCI') -or ($_.InstanceId -match 'usbip|vhci') }; " ^
+"$devs = Get-PnpDevice | Where-Object { ($_.FriendlyName -match 'usbip|USB/IP|VHCI|VHCI_ude') -or ($_.InstanceId -match 'usbip|vhci|VHCI_ude') }; " ^
 "if(-not $devs){ Write-Host 'No matching PnP devices found.'; exit 0 };" ^
 "$devs | ForEach-Object { Write-Host ('Removing device: ' + ($_.FriendlyName) + ' [' + $_.InstanceId + ']'); & pnputil /remove-device $_.InstanceId | Out-Host }"
 

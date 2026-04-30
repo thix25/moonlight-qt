@@ -77,53 +77,15 @@ if exist usbip_test.pfx (
 echo.
 echo Step 4: Installing VHCI driver...
 
-REM Find devcon.exe — needed to create the root device node.
-REM pnputil /add-driver alone only stages the driver; devcon install actually
-REM creates the ROOT\VHCI_ude device node that the driver binds to.
-set "DEVCON="
-for %%P in (
-    "%ProgramFiles%\Surfshark\Resources\x64\devcon.exe"
-    "%ProgramFiles(x86)%\Windows Kits\10\Tools\x64\devcon.exe"
-    "%ProgramFiles(x86)%\Windows Kits\10\Tools\x86\devcon.exe"
-    "devcon.exe"
-) do (
-    if exist %%P (
-        if not defined DEVCON set "DEVCON=%%~P"
-    )
-)
-
-if not defined DEVCON (
-    echo WARNING: devcon.exe not found. Cannot create device node automatically.
-    echo.
-    echo  pnputil /add-driver alone only stages the driver but does NOT create
-    echo  the ROOT\VHCI_ude device — the VHCI will remain invisible until you run:
-    echo.
-    echo    devcon install usbip_vhci_ude.inf ROOT\VHCI_ude
-    echo.
-    echo  devcon.exe is included with the Windows Driver Kit (WDK) or can be
-    echo  downloaded from Microsoft's GitHub releases page.
-)
-
 if exist usbip_vhci_ude.inf (
-    echo Installing UDE version (staging driver package)...
+    echo Installing UDE version...
     pnputil /add-driver usbip_vhci_ude.inf /install
-    if defined DEVCON (
-        echo Creating ROOT\VHCI_ude device node via devcon...
-        "%DEVCON%" install usbip_vhci_ude.inf ROOT\VHCI_ude
-        if %errorLevel% equ 0 (
-            echo Device node created successfully.
-        ) else (
-            echo WARNING: devcon install failed ^(exit code %errorLevel%^).
-            echo The driver is staged but the device node may not be active.
-        )
-    )
 ) else if exist usbip_vhci.inf (
     echo Installing WDM version...
     pnputil /add-driver usbip_vhci.inf /install
     if exist usbip_root.inf (
         pnputil /add-driver usbip_root.inf /install
     )
-    REM WDM version is typically enumerated by the root bus — no devcon needed
 ) else (
     echo ERROR: No .inf driver file found.
     pause
