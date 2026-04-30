@@ -309,6 +309,9 @@ void PassthroughClient::onSocketDisconnected()
     qInfo() << "Passthrough: disconnected from server";
 
     m_KeepaliveTimer.stop();
+    // Stop hotplug polling so it doesn't keep running while disconnected
+    // and doesn't cause double-polling after reconnect.
+    m_DeviceEnumerator.stopHotplugPolling();
     setConnected(false);
 
     // Clean up all forwarding on disconnect — return devices to client
@@ -687,6 +690,19 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
             break;
         }
         auto* ack = reinterpret_cast<const MlptProtocol::HelloAckPayload*>(payload.constData());
+
+        // Verify the server speaks the same protocol version
+        if (ack->serverVersion != MlptProtocol::VERSION) {
+            qWarning() << "Passthrough: server protocol version mismatch:"
+                       << "server=" << ack->serverVersion
+                       << "client=" << MlptProtocol::VERSION
+                       << "– closing connection";
+            setStatusText(tr("Protocol version mismatch (server=%1, client=%2)")
+                          .arg(ack->serverVersion).arg(MlptProtocol::VERSION));
+            m_Socket.disconnectFromHost();
+            break;
+        }
+
         m_VhciAvailable = ack->vhciAvailable != 0;
         m_ServerBackend = ack->vhciBackend;
         emit vhciAvailableChanged();
@@ -736,6 +752,10 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
             emit deviceAttached(ack->deviceId, ack->vhciPort);
         } else {
             qWarning() << "Passthrough: device" << ack->deviceId << "attach failed, status:" << ack->status;
+            // Clean up the exporter/capture that was optimistically created in attachDevice()
+            // so the device can be retried later instead of staying stuck as "already exported".
+            cleanupExporter(ack->deviceId);
+            cleanupBtCapture(ack->deviceId);
             emit deviceAttachFailed(ack->deviceId, ack->status);
         }
         break;

@@ -4,6 +4,12 @@ import QtQuick.Layouts 1.2
 
 import StreamingPreferences 1.0
 
+// Device Passthrough overlay – shown during streaming via Ctrl+Alt+Shift+P
+//
+// IMPORTANT: The device list uses a SINGLE unified ListView with inline delegates.
+// Do NOT refactor the delegate into a file-scope Component: doing so breaks model
+// role access because the Component's creation context is the document root, not
+// the ListView delegate scope that carries role properties (deviceName, etc.).
 Item {
     id: passthroughView
 
@@ -40,9 +46,9 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
-            spacing: 12
+            spacing: 10
 
-            // ─── Title bar ───
+            // ─── title bar ───
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -60,6 +66,7 @@ Item {
                     text: passthroughClient ? passthroughClient.statusText : qsTr("Not available")
                     font.pointSize: 10
                     color: passthroughClient && passthroughClient.connected ? "#4CAF50" : "#FF9800"
+                    elide: Text.ElideRight
                 }
 
                 Button {
@@ -75,7 +82,7 @@ Item {
                 }
             }
 
-            // ─── VHCI warning ───
+            // ─── VHCI driver warning ───
             Rectangle {
                 Layout.fillWidth: true
                 height: vhciWarningText.implicitHeight + 16
@@ -83,7 +90,9 @@ Item {
                 radius: 4
                 border.color: "#FF5252"
                 border.width: 1
-                visible: passthroughClient && passthroughClient.connected && !passthroughClient.vhciAvailable
+                visible: passthroughClient
+                         && passthroughClient.connected
+                         && !passthroughClient.vhciAvailable
 
                 Label {
                     id: vhciWarningText
@@ -95,223 +104,216 @@ Item {
                 }
             }
 
-            // ─── Section: USB Devices ───
-            Label {
-                text: qsTr("USB Devices")
-                font.pointSize: 12
-                font.bold: true
-                color: "#B0B0B0"
-                visible: usbListView.count > 0
-            }
-
+            // ─── unified device list ───
+            // Uses ListView section headers (transport "1" = USB, "2" = Bluetooth).
+            // DeviceEnumerator always produces USB devices before BT devices so the
+            // sections are naturally contiguous – no proxy sort needed.
             ListView {
-                id: usbListView
+                id: deviceListView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.preferredHeight: contentHeight
-                Layout.maximumHeight: parent.height * 0.35
                 clip: true
                 spacing: 4
-                visible: count > 0
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: deviceListView.contentHeight > deviceListView.height
+                            ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                }
 
                 model: passthroughClient ? passthroughClient.deviceEnumerator : null
 
-                delegate: Loader {
-                    width: usbListView.width
-                    // Only show USB devices (transport === 1)
-                    active: transport === 1
-                    visible: active
-                    height: active ? item.height : 0
+                // Section header – only rendered when that transport type is present
+                section.property: "transport"
+                section.criteria: ViewSection.FullString
+                section.delegate: Column {
+                    width: deviceListView.width
+                    topPadding: 4
+                    bottomPadding: 2
+                    spacing: 4
 
-                    sourceComponent: deviceDelegate
-                    property int delegateIndex: index
-                    property var listViewRef: usbListView
+                    Label {
+                        width: parent.width
+                        text: section === "1" ? qsTr("USB Devices") : qsTr("Bluetooth Devices")
+                        font.pointSize: 12
+                        font.bold: true
+                        color: "#B0B0B0"
+                    }
+
+                    // BT-only informational note
+                    Label {
+                        width: parent.width
+                        visible: section === "2"
+                        height: visible ? implicitHeight : 0
+                        text: qsTr("Bluetooth HID devices (keyboards, mice) are forwarded as USB HID devices on the server. Non-HID Bluetooth devices are not supported.")
+                        color: "#707070"
+                        font.pointSize: 8
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                // ─── inline delegate ───
+                // All model roles (deviceName, transport, deviceClass, …) are
+                // accessible here because the delegate IS the ListView delegate scope.
+                // Do NOT extract this into a file-scope Component.
+                delegate: Rectangle {
+                    width: deviceListView.width
+                    height: rowContent.implicitHeight + 12
+                    color: isForwarding ? "#1A4CAF50" : "#1AFFFFFF"
+                    radius: 4
+                    border.color: isForwarding ? "#4CAF50" : "transparent"
+                    border.width: isForwarding ? 1 : 0
+
+                    RowLayout {
+                        id: rowContent
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 10
+
+                        // ── device class icon ──
+                        Rectangle {
+                            width: 32
+                            height: 32
+                            radius: 4
+                            color: "#404040"
+
+                            Text {
+                                anchors.centerIn: parent
+                                font.pointSize: 16
+                                font.family: "Segoe UI Emoji,Apple Color Emoji,Noto Color Emoji,sans-serif"
+                                text: {
+                                    switch (deviceClass) {
+                                    case 1: return "\u2328"      // ⌨ keyboard
+                                    case 2: return "\uD83D\uDDB1" // 🖱 mouse
+                                    case 3: return "\uD83C\uDFAE" // 🎮 gamepad
+                                    case 5: return "\uD83D\uDCBE" // 💾 storage
+                                    case 6: return "\uD83D\uDD0A" // 🔊 audio
+                                    case 7: return "\uD83D\uDCF7" // 📷 webcam
+                                    case 8: return "\uD83D\uDCE1" // 📡 BT adapter
+                                    default: return "\uD83D\uDD0C" // 🔌 other USB
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── device name & metadata ──
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                text: deviceName
+                                font.pointSize: 11
+                                color: "white"
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            RowLayout {
+                                spacing: 8
+                                Layout.fillWidth: true
+
+                                Label {
+                                    text: deviceClassName
+                                    font.pointSize: 9
+                                    color: "#B0B0B0"
+                                }
+
+                                Label {
+                                    text: vidPidText
+                                    font.pointSize: 9
+                                    color: "#808080"
+                                    font.family: "Consolas,monospace"
+                                }
+
+                                Label {
+                                    visible: transport === 2 && batteryPercent >= 0
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? qsTr("Battery: %1%").arg(batteryPercent) : ""
+                                    font.pointSize: 9
+                                    color: batteryPercent > 20 ? "#4CAF50" : "#FF5252"
+                                }
+
+                                Label {
+                                    visible: transport === 2
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? (btConnected ? qsTr("Connected") : qsTr("Disconnected")) : ""
+                                    font.pointSize: 9
+                                    color: btConnected ? "#4CAF50" : "#FF5252"
+                                }
+                            }
+                        }
+
+                        // ── forwarding status badge ──
+                        Label {
+                            text: statusText
+                            font.pointSize: 9
+                            color: isForwarding ? "#4CAF50" : "#808080"
+                        }
+
+                        // ── auto-forward checkbox ──
+                        CheckBox {
+                            text: qsTr("Auto")
+                            checked: autoForward
+                            // onClicked fires only on user interaction,
+                            // not on programmatic model updates via the binding.
+                            onClicked: {
+                                if (passthroughClient) {
+                                    passthroughClient.deviceEnumerator.setAutoForward(index, checked)
+                                }
+                            }
+
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Automatically forward this device when streaming starts")
+                        }
+
+                        // ── forwarding toggle ──
+                        Switch {
+                            checked: isForwarding
+                            enabled: passthroughClient
+                                     && passthroughClient.connected
+                                     && passthroughClient.vhciAvailable
+                                     && (transport !== 2 || btConnected)
+                                     && (transport !== 2
+                                         || deviceClass === 1
+                                         || deviceClass === 2
+                                         || deviceClass === 3
+                                         || deviceClass === 4)
+
+                            // Use the MODEL's isForwarding (not `checked`) to determine
+                            // the desired action so the logic is independent of QML
+                            // binding-revert timing.
+                            onClicked: {
+                                if (passthroughClient) {
+                                    if (isForwarding) {
+                                        passthroughClient.detachDevice(deviceId)
+                                    } else {
+                                        passthroughClient.attachDevice(deviceId)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // ─── Section: Bluetooth Devices ───
-            Label {
-                text: qsTr("Bluetooth Devices")
-                font.pointSize: 12
-                font.bold: true
-                color: "#B0B0B0"
-                visible: btListView.count > 0
-            }
-
+            // ─── empty state placeholder ───
             Label {
                 Layout.fillWidth: true
-                text: qsTr("Bluetooth HID devices (keyboards, mice) are forwarded as USB HID devices on the server. Non-HID Bluetooth devices are not supported.")
-                color: "#707070"
-                font.pointSize: 8
-                wrapMode: Text.WordWrap
-                visible: btListView.count > 0
+                Layout.alignment: Qt.AlignHCenter
+                visible: deviceListView.count === 0
+                text: qsTr("No devices found. Click Refresh to scan again.")
+                color: "#808080"
+                font.pointSize: 10
+                horizontalAlignment: Text.AlignHCenter
             }
 
-            ListView {
-                id: btListView
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredHeight: contentHeight
-                Layout.maximumHeight: parent.height * 0.35
-                clip: true
-                spacing: 4
-                visible: count > 0
-
-                model: passthroughClient ? passthroughClient.deviceEnumerator : null
-
-                delegate: Loader {
-                    width: btListView.width
-                    // Only show Bluetooth devices (transport === 2)
-                    active: transport === 2
-                    visible: active
-                    height: active ? item.height : 0
-
-                    sourceComponent: deviceDelegate
-                    property int delegateIndex: index
-                    property var listViewRef: btListView
-                }
-            }
-
-            // ─── Hint text ───
+            // ─── bottom hint ───
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Toggle devices to forward them to the server. USB devices are forwarded natively. Bluetooth HID devices are presented as USB HID on the server.")
                 color: "#808080"
                 font.pointSize: 9
                 wrapMode: Text.WordWrap
-            }
-        }
-    }
-
-    Component {
-        id: deviceDelegate
-
-        Rectangle {
-            width: parent ? parent.width : 100
-            height: deviceRow.implicitHeight + 12
-            color: isForwarding ? "#1A4CAF50" : "#1AFFFFFF"
-            radius: 4
-            border.color: isForwarding ? "#4CAF50" : "transparent"
-            border.width: isForwarding ? 1 : 0
-
-            RowLayout {
-                id: deviceRow
-                anchors.fill: parent
-                anchors.margins: 6
-                spacing: 10
-
-                // Device icon placeholder
-                Rectangle {
-                    width: 32
-                    height: 32
-                    radius: 4
-                    color: "#404040"
-
-                    Label {
-                        anchors.centerIn: parent
-                        text: {
-                            switch (deviceClass) {
-                            case 1: return "⌨"  // Keyboard
-                            case 2: return "🖱"  // Mouse
-                            case 3: return "🎮"  // Gamepad
-                            case 5: return "💾"  // Storage
-                            case 6: return "🔊"  // Audio
-                            case 7: return "📷"  // Webcam
-                            case 8: return "📡"  // BT Adapter
-                            default: return "🔌"  // Other
-                            }
-                        }
-                        font.pointSize: 14
-                    }
-                }
-
-                // Device info
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-
-                    Label {
-                        text: deviceName
-                        font.pointSize: 11
-                        color: "white"
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-
-                    RowLayout {
-                        spacing: 8
-
-                        Label {
-                            text: deviceClassName
-                            font.pointSize: 9
-                            color: "#B0B0B0"
-                        }
-
-                        Label {
-                            text: vidPidText
-                            font.pointSize: 9
-                            color: "#808080"
-                            font.family: "Consolas"
-                        }
-
-                        Label {
-                            text: transport === 2 && batteryPercent >= 0
-                                  ? qsTr("Battery: %1%").arg(batteryPercent)
-                                  : ""
-                            font.pointSize: 9
-                            color: batteryPercent > 20 ? "#4CAF50" : "#FF5252"
-                            visible: text !== ""
-                        }
-
-                        Label {
-                            text: transport === 2
-                                  ? (btConnected ? qsTr("Connected") : qsTr("Disconnected"))
-                                  : ""
-                            font.pointSize: 9
-                            color: btConnected ? "#4CAF50" : "#FF5252"
-                            visible: text !== ""
-                        }
-                    }
-                }
-
-                // Status
-                Label {
-                    text: statusText
-                    font.pointSize: 9
-                    color: isForwarding ? "#4CAF50" : "#808080"
-                }
-
-                // Auto-forward checkbox
-                CheckBox {
-                    id: autoFwdCheck
-                    text: qsTr("Auto")
-                    checked: autoForward
-                    onCheckedChanged: {
-                        if (passthroughClient) {
-                            passthroughClient.deviceEnumerator.setAutoForward(index, checked)
-                        }
-                    }
-
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Automatically forward this device when streaming starts")
-                }
-
-                // Forward toggle
-                Switch {
-                    checked: isForwarding
-                    enabled: passthroughClient && passthroughClient.connected && passthroughClient.vhciAvailable
-                             && (transport !== 2 || btConnected)
-                             && (transport !== 2 || deviceClass === 1 || deviceClass === 2 || deviceClass === 3 || deviceClass === 4)
-                    onClicked: {
-                        if (passthroughClient) {
-                            if (!checked) {
-                                passthroughClient.attachDevice(deviceId)
-                            } else {
-                                passthroughClient.detachDevice(deviceId)
-                            }
-                        }
-                    }
-                }
             }
         }
     }
