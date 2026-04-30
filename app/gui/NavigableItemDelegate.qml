@@ -2,21 +2,21 @@ import QtQuick 2.0
 import QtQuick.Controls 2.2
 
 ItemDelegate {
-    property GridView grid
+    property var grid: null
 
-    highlighted: grid.activeFocus && grid.currentItem === this
+    highlighted: grid && grid.activeFocus && grid.currentItem === this
 
     Keys.onLeftPressed: {
-        grid.moveCurrentIndexLeft()
+        if (grid && grid.moveCurrentIndexLeft) grid.moveCurrentIndexLeft()
     }
     Keys.onRightPressed: {
-        grid.moveCurrentIndexRight()
+        if (grid && grid.moveCurrentIndexRight) grid.moveCurrentIndexRight()
     }
     Keys.onDownPressed: {
-        grid.moveCurrentIndexDown()
+        if (grid && grid.moveCurrentIndexDown) grid.moveCurrentIndexDown()
     }
     Keys.onUpPressed: {
-        grid.moveCurrentIndexUp()
+        if (grid && grid.moveCurrentIndexUp) grid.moveCurrentIndexUp()
     }
     Keys.onReturnPressed: {
         clicked()
