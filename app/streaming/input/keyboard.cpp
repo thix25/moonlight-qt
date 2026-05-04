@@ -153,6 +153,12 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_PushEvent(&quitExitEvent);
         break;
 
+    case KeyComboTogglePassthrough:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected passthrough toggle combo");
+        emit Session::get()->togglePassthrough();
+        break;
+
     default:
         Q_UNREACHABLE();
     }

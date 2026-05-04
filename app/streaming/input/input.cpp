@@ -118,6 +118,11 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     m_SpecialKeyCombos[KeyComboQuitAndExit].scanCode = SDL_SCANCODE_E;
     m_SpecialKeyCombos[KeyComboQuitAndExit].enabled = true;
 
+    m_SpecialKeyCombos[KeyComboTogglePassthrough].keyCombo = KeyComboTogglePassthrough;
+    m_SpecialKeyCombos[KeyComboTogglePassthrough].keyCode = SDLK_p;
+    m_SpecialKeyCombos[KeyComboTogglePassthrough].scanCode = SDL_SCANCODE_P;
+    m_SpecialKeyCombos[KeyComboTogglePassthrough].enabled = true;
+
     m_OldIgnoreDevices = SDL_GetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES);
     m_OldIgnoreDevicesExcept = SDL_GetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT);
 
@@ -203,7 +208,9 @@ SdlInputHandler::~SdlInputHandler()
 {
     for (int i = 0; i < MAX_GAMEPADS; i++) {
         if (m_GamepadState[i].mouseEmulationTimer != 0) {
-            Session::get()->notifyMouseEmulationMode(false);
+            if (Session::get() != nullptr) {
+                Session::get()->notifyMouseEmulationMode(false);
+            }
             SDL_RemoveTimer(m_GamepadState[i].mouseEmulationTimer);
         }
 #if !SDL_VERSION_ATLEAST(2, 0, 9)

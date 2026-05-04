@@ -1,4 +1,4 @@
-import QtQuick 2.0
+import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Window 2.2
 
@@ -127,6 +127,7 @@ Item {
         session.quitStarting.connect(quitStarting)
         session.sessionFinished.connect(sessionFinished)
         session.readyForDeletion.connect(sessionReadyForDeletion)
+        session.togglePassthrough.connect(togglePassthroughView)
 
         // Kick off the stream
         spinnerTimer.start()
@@ -170,6 +171,9 @@ Item {
             // gamepad usage.
             hintText.text = qsTr("Tip:") + " " + qsTr("Press %1 to disconnect your session").arg(SdlGamepadKeyNavigation.getConnectedGamepads() > 0 ?
                                                   qsTr("Start+Select+L1+R1") : qsTr("Ctrl+Alt+Shift+Q"))
+            if (StreamingPreferences.enablePassthrough) {
+                hintText.text += "\n" + qsTr("Press Ctrl+Alt+Shift+P for device passthrough")
+            }
 
             // Stop GUI gamepad usage now
             SdlGamepadKeyNavigation.disable()
@@ -241,5 +245,50 @@ Item {
         verticalAlignment: Text.AlignVCenter
 
         wrapMode: Text.Wrap
+    }
+
+    // ─── Passthrough overlay ───
+    Loader {
+        id: passthroughOverlay
+        anchors.fill: parent
+        z: 1000
+        active: false
+        visible: active
+
+        // Use source URL instead of sourceComponent to isolate
+        // PassthroughView errors from preventing StreamSegue from loading
+        source: active ? "PassthroughView.qml" : ""
+
+        onLoaded: {
+            if (item) {
+                item.passthroughClient = Qt.binding(function() {
+                    return session ? session.passthroughClient() : null;
+                });
+                item.closeRequested.connect(function() {
+                    passthroughOverlay.active = false;
+                    window.visible = false;
+                });
+            }
+        }
+    }
+
+    function togglePassthroughView() {
+        if (!session || !session.passthroughClient()) {
+            return
+        }
+        if (passthroughOverlay.active) {
+            passthroughOverlay.active = false
+            window.visible = false
+        } else {
+            window.visible = true
+            passthroughOverlay.active = true
+        }
+    }
+
+    // Keyboard shortcut to toggle passthrough view (Ctrl+Alt+Shift+P)
+    // Must call togglePassthroughView() so window visibility is managed correctly.
+    Shortcut {
+        sequence: "Ctrl+Alt+Shift+P"
+        onActivated: togglePassthroughView()
     }
 }
