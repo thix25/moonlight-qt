@@ -18,6 +18,11 @@ PassthroughClient::PassthroughClient(QObject* parent)
 {
     memset(m_SessionId, 0, sizeof(m_SessionId));
 
+    // Register UsbIpHeader for cross-thread queued signal/slot delivery.
+    // Without this, urbCompleted signals emitted from the libusb event
+    // thread are silently dropped and no URBs ever complete.
+    qRegisterMetaType<MlptProtocol::UsbIpHeader>();
+
     // Initialize libusb
     UsbIpExporter::initLibusb();
 
@@ -105,9 +110,13 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         return;
     }
 
-    // Check if already exporting
+    // Check if already exporting — this can happen if the model's
+    // isForwarding flag got out of sync (e.g. after a failed detach).
+    // Re-sync the model flag and return success instead of silently
+    // ignoring the request, which would leave the UI switch stuck.
     if (m_Exporters.contains(deviceId) || m_BtCaptures.contains(deviceId)) {
-        qWarning() << "Device" << deviceId << "already being exported";
+        qWarning() << "Device" << deviceId << "already being exported, syncing model";
+        m_DeviceEnumerator.setDeviceForwarding(deviceId, true);
         return;
     }
 
@@ -172,6 +181,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
 
         // Send DEVICE_ATTACH with USB descriptors
         sendDeviceAttachWithDescriptors(deviceId, exporter);
+        startAttachTimeout(deviceId);
 
         qInfo() << "Requested attach for USB device" << deviceId
                 << "(captured with libusb, descriptors sent)"
@@ -236,6 +246,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
 
         // Send DEVICE_ATTACH with synthesized USB descriptors
         sendDeviceAttachWithDescriptors(deviceId, capture);
+        startAttachTimeout(deviceId);
 
         qInfo() << "Requested attach for BT HID device" << deviceId
                 << "(captured with HID API, descriptors sent)";
@@ -267,7 +278,11 @@ void PassthroughClient::detachDevice(uint32_t deviceId)
 
 void PassthroughClient::refreshDevices()
 {
-    m_DeviceEnumerator.enumerate();
+    // Use pollHotplug() instead of enumerate() to preserve forwarding
+    // state and device IDs for devices that are currently being exported.
+    // enumerate() wipes everything and reassigns IDs from 1, which
+    // desyncs the model from the active exporters in m_Exporters.
+    m_DeviceEnumerator.pollHotplug();
     if (m_Connected) {
         sendDeviceList();
     }
@@ -313,6 +328,13 @@ void PassthroughClient::onSocketDisconnected()
     // and doesn't cause double-polling after reconnect.
     m_DeviceEnumerator.stopHotplugPolling();
     setConnected(false);
+
+    // Cancel all pending attach timeouts
+    for (auto* timer : m_PendingAttachTimers) {
+        timer->stop();
+        timer->deleteLater();
+    }
+    m_PendingAttachTimers.clear();
 
     // Clean up all forwarding on disconnect — return devices to client
     cleanupAllExporters();
@@ -405,12 +427,27 @@ void PassthroughClient::scheduleReconnect()
 
 void PassthroughClient::sendMessage(MlptProtocol::MsgType type, const QByteArray& payload)
 {
+    // Write header + payload in a single write to avoid split packets
+    // (TCP_NODELAY is enabled, so separate writes would send separate packets)
     uint8_t headerBuf[MlptProtocol::HEADER_SIZE];
     MlptProtocol::writeHeader(headerBuf, type, payload.size());
 
-    m_Socket.write(reinterpret_cast<const char*>(headerBuf), MlptProtocol::HEADER_SIZE);
+    QByteArray frame;
+    frame.reserve(MlptProtocol::HEADER_SIZE + payload.size());
+    frame.append(reinterpret_cast<const char*>(headerBuf), MlptProtocol::HEADER_SIZE);
     if (!payload.isEmpty()) {
-        m_Socket.write(payload);
+        frame.append(payload);
+    }
+
+    qint64 written = m_Socket.write(frame);
+    if (written < 0) {
+        qWarning() << "Passthrough: sendMessage failed for type" << type
+                    << "- socket error:" << m_Socket.errorString()
+                    << "state:" << m_Socket.state();
+        // The socket error handler will trigger reconnection
+    } else if (written < frame.size()) {
+        qWarning() << "Passthrough: sendMessage partial write for type" << type
+                    << "- wrote" << written << "of" << frame.size() << "bytes";
     }
 }
 
@@ -756,6 +793,8 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
         if (payload.size() < static_cast<int>(sizeof(MlptProtocol::DeviceAttachAckPayload))) break;
         auto* ack = reinterpret_cast<const MlptProtocol::DeviceAttachAckPayload*>(payload.constData());
 
+        cancelAttachTimeout(ack->deviceId);
+
         if (ack->status == MlptProtocol::ATTACH_OK) {
             qInfo() << "Passthrough: device" << ack->deviceId << "attached on VHCI port" << ack->vhciPort;
             m_DeviceEnumerator.setDeviceForwarding(ack->deviceId, true);
@@ -816,5 +855,39 @@ void PassthroughClient::setStatusText(const QString& text)
     if (m_StatusText != text) {
         m_StatusText = text;
         emit statusTextChanged();
+    }
+}
+
+void PassthroughClient::startAttachTimeout(uint32_t deviceId)
+{
+    cancelAttachTimeout(deviceId); // Cancel any existing timer
+
+    auto* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(ATTACH_TIMEOUT_MS);
+    connect(timer, &QTimer::timeout, this, [this, deviceId]() {
+        qWarning() << "Passthrough: attach timeout for device" << deviceId
+                   << "- no ACK received within" << ATTACH_TIMEOUT_MS << "ms";
+
+        // Clean up the optimistically created exporter/capture
+        cleanupExporter(deviceId);
+        cleanupBtCapture(deviceId);
+
+        // Remove the timer
+        cancelAttachTimeout(deviceId);
+
+        emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
+    });
+    m_PendingAttachTimers.insert(deviceId, timer);
+    timer->start();
+}
+
+void PassthroughClient::cancelAttachTimeout(uint32_t deviceId)
+{
+    auto it = m_PendingAttachTimers.find(deviceId);
+    if (it != m_PendingAttachTimers.end()) {
+        (*it)->stop();
+        (*it)->deleteLater();
+        m_PendingAttachTimers.erase(it);
     }
 }

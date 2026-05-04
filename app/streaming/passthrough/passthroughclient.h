@@ -77,6 +77,8 @@ private:
     void cleanupBtCapture(uint32_t deviceId);
     void cleanupAllBtCaptures();
     void scheduleReconnect();
+    void startAttachTimeout(uint32_t deviceId);
+    void cancelAttachTimeout(uint32_t deviceId);
 
     QTcpSocket m_Socket;
     QTimer m_KeepaliveTimer;
@@ -106,4 +108,8 @@ private:
 
     int m_ReconnectAttempts;
     static constexpr int MAX_RECONNECT_ATTEMPTS = 5;
+    static constexpr int ATTACH_TIMEOUT_MS = 10000; // 10s timeout for attach ACK
+
+    // Pending attach timers: deviceId → QTimer*
+    QHash<uint32_t, QTimer*> m_PendingAttachTimers;
 };

@@ -89,10 +89,12 @@ signals:
     void deviceAdded(uint32_t deviceId);
     void deviceRemoved(uint32_t deviceId);
 
+public slots:
+    void pollHotplug();
+
 private:
     void enumerateUsb();
     void enumerateBluetooth();
-    void pollHotplug();
 
     uint32_t m_NextDeviceId;
     QList<PassthroughDevice> m_Devices;
