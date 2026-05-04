@@ -1,9 +1,12 @@
 #include "computermodel.h"
+#include "settings/streamingpreferences.h"
 
 #include <QThreadPool>
+#include <QSettings>
+#include <algorithm>
 
 ComputerModel::ComputerModel(QObject* object)
-    : QAbstractListModel(object) {}
+    : QAbstractListModel(object), m_ComputerManager(nullptr), m_SortMode(0) {}
 
 void ComputerModel::initialize(ComputerManager* computerManager)
 {
@@ -13,7 +16,15 @@ void ComputerModel::initialize(ComputerManager* computerManager)
     connect(m_ComputerManager, &ComputerManager::pairingCompleted,
             this, &ComputerModel::handlePairingCompleted);
 
+    // Load sort mode from preferences
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    m_SortMode = static_cast<int>(prefs->pcSortMode);
+
+    // Load custom order
+    loadCustomOrder();
+
     m_Computers = m_ComputerManager->getComputers();
+    sortComputers();
 }
 
 QVariant ComputerModel::data(const QModelIndex& index, int role) const
@@ -84,6 +95,87 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
     }
     case UuidRole:
         return computer->uuid;
+    case SectionRole: {
+        // Return cached section from last sort to prevent race conditions
+        // between sorting and data display
+        return m_CachedSections.value(computer->uuid, tr("Offline"));
+    }
+    case HasClientSettingsRole: {
+        if (computer->uuid.isEmpty()) return false;
+        return StreamingPreferences::get()->hasClientSettings(computer->uuid);
+    }
+    case HasSavedClientSettingsRole: {
+        if (computer->uuid.isEmpty()) return false;
+        return StreamingPreferences::get()->hasSavedClientSettings(computer->uuid);
+    }
+    case SettingsSummaryRole: {
+        // Guard against empty UUID (freshly discovered PCs)
+        if (computer->uuid.isEmpty()) return QString();
+        
+        // Build a compact settings summary for this PC by reading directly
+        // from QSettings to avoid mutating the global singleton (which would
+        // cause signal storms, race conditions, and potential deadlocks).
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        bool hasCustom = prefs->hasClientSettings(computer->uuid);
+
+        int w, h, fpsVal, bitrateVal;
+        int codecVal;
+        bool vsyncVal;
+
+        if (!hasCustom) {
+            // Use current global values directly
+            w = prefs->width;
+            h = prefs->height;
+            fpsVal = prefs->fps;
+            bitrateVal = prefs->bitrateKbps;
+            codecVal = static_cast<int>(prefs->videoCodecConfig);
+            vsyncVal = prefs->enableVsync;
+        } else {
+            // Read client-specific settings directly from QSettings
+            // without touching the singleton's state
+            QSettings settings;
+            settings.beginGroup("clients/" + computer->uuid);
+            w = settings.value("width", prefs->width).toInt();
+            h = settings.value("height", prefs->height).toInt();
+            fpsVal = settings.value("fps", prefs->fps).toInt();
+            bitrateVal = settings.value("bitrate", prefs->bitrateKbps).toInt();
+            codecVal = settings.value("videocfg", static_cast<int>(prefs->videoCodecConfig)).toInt();
+            vsyncVal = settings.value("vsync", prefs->enableVsync).toBool();
+            settings.endGroup();
+        }
+
+        QString codecStr;
+        switch (codecVal) {
+        case StreamingPreferences::VCC_AUTO: codecStr = tr("Auto"); break;
+        case StreamingPreferences::VCC_FORCE_H264: codecStr = "H.264"; break;
+        case StreamingPreferences::VCC_FORCE_HEVC: codecStr = "HEVC"; break;
+        case StreamingPreferences::VCC_FORCE_AV1: codecStr = "AV1"; break;
+        default: codecStr = tr("Auto"); break;
+        }
+
+        // Friendly resolution name prefix
+        QString resName;
+        if (w == 3840 && h == 2160) resName = "4K";
+        else if (w == 2560 && h == 1440) resName = "1440p";
+        else if (w == 1920 && h == 1080) resName = "1080p";
+        else if (w == 1280 && h == 720) resName = "720p";
+        else if (w == 2560 && h == 1080) resName = "UW-1080p";
+        else if (w == 3440 && h == 1440) resName = "UW-1440p";
+        else if (w == 7680 && h == 4320) resName = "8K";
+        else resName = QString();
+
+        QString resStr = resName.isEmpty()
+            ? QString("%1x%2").arg(w).arg(h)
+            : QString("%1 (%2x%3)").arg(resName).arg(w).arg(h);
+
+        return QString("%1 | %2 FPS | %3 Mbps | %4 | VSync: %5 | %6")
+            .arg(resStr)
+            .arg(fpsVal)
+            .arg(QString::number(bitrateVal / 1000.0, 'f', 1))
+            .arg(codecStr)
+            .arg(vsyncVal ? tr("On") : tr("Off"))
+            .arg(hasCustom ? tr("Custom") : tr("Global"));
+    }
     default:
         return QVariant();
     }
@@ -113,6 +205,10 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[ServerSupportedRole] = "serverSupported";
     names[DetailsRole] = "details";
     names[UuidRole] = "uuid";
+    names[SectionRole] = "section";
+    names[HasClientSettingsRole] = "hasClientSettings";
+    names[SettingsSummaryRole] = "settingsSummary";
+    names[HasSavedClientSettingsRole] = "hasSavedClientSettings";
 
     return names;
 }
@@ -232,17 +328,196 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
 {
     QVector<NvComputer*> newComputerList = m_ComputerManager->getComputers();
 
-    // Reset the model if the structural layout of the list has changed
-    if (m_Computers != newComputerList) {
+    // Check if computers were added or removed
+    bool listChanged = (newComputerList.count() != m_Computers.count());
+    if (!listChanged) {
+        QSet<NvComputer*> oldSet(m_Computers.begin(), m_Computers.end());
+        QSet<NvComputer*> newSet(newComputerList.begin(), newComputerList.end());
+        listChanged = (oldSet != newSet);
+    }
+
+    if (listChanged) {
+        // Computers added/removed - full reset required
         beginResetModel();
         m_Computers = newComputerList;
+        sortComputers();
+        endResetModel();
+        return;
+    }
+
+    // Same computers. Check if any section assignment changed
+    // (which would require re-sorting for proper grouping)
+    bool sectionChanged = false;
+    for (NvComputer* pc : m_Computers) {
+        QReadLocker lock(&pc->lock);
+        QString cachedSection = m_CachedSections.value(pc->uuid);
+        QString currentSection;
+        if (pc->state == NvComputer::CS_ONLINE && pc->pairState == NvComputer::PS_PAIRED)
+            currentSection = tr("Online");
+        else if (pc->state == NvComputer::CS_ONLINE && pc->pairState != NvComputer::PS_PAIRED)
+            currentSection = tr("Not Paired");
+        else
+            currentSection = tr("Offline");
+
+        if (cachedSection != currentSection) {
+            sectionChanged = true;
+            break;
+        }
+    }
+
+    if (sectionChanged) {
+        // Section changed - re-sort needed for proper grouping
+        beginResetModel();
+        sortComputers();
+        endResetModel();
+    } else {
+        // No structural changes - just emit dataChanged for the specific computer
+        for (int i = 0; i < m_Computers.count(); i++) {
+            if (m_Computers[i] == computer) {
+                emit dataChanged(createIndex(i, 0), createIndex(i, 0));
+                break;
+            }
+        }
+    }
+}
+
+void ComputerModel::sortComputers()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+
+    // Snapshot section assignments BEFORE sorting to prevent race conditions.
+    // Computer state can change on background threads between comparator calls,
+    // making the sort inconsistent if we read state inside the comparator.
+    QHash<QString, int> sectionOrder;
+    m_CachedSections.clear();
+    for (NvComputer* pc : m_Computers) {
+        QReadLocker lock(&pc->lock);
+        if (pc->state == NvComputer::CS_ONLINE && pc->pairState == NvComputer::PS_PAIRED) {
+            sectionOrder[pc->uuid] = 0;
+            m_CachedSections[pc->uuid] = tr("Online");
+        } else if (pc->state == NvComputer::CS_ONLINE && pc->pairState != NvComputer::PS_PAIRED) {
+            sectionOrder[pc->uuid] = 1;
+            m_CachedSections[pc->uuid] = tr("Not Paired");
+        } else {
+            sectionOrder[pc->uuid] = 2;
+            m_CachedSections[pc->uuid] = tr("Offline");
+        }
+    }
+
+    if (m_SortMode == 1 && !m_CustomOrder.isEmpty()) {
+        // Custom sort order - always group by section first
+        std::sort(m_Computers.begin(), m_Computers.end(),
+                  [this, &sectionOrder](NvComputer* a, NvComputer* b) {
+            int secA = sectionOrder.value(a->uuid, 2);
+            int secB = sectionOrder.value(b->uuid, 2);
+            if (secA != secB) return secA < secB;
+
+            int idxA = m_CustomOrder.indexOf(a->uuid);
+            int idxB = m_CustomOrder.indexOf(b->uuid);
+            if (idxA < 0 && idxB < 0) {
+                QReadLocker lockA(&a->lock);
+                QReadLocker lockB(&b->lock);
+                return a->name.toLower() < b->name.toLower();
+            }
+            if (idxA < 0) return false;
+            if (idxB < 0) return true;
+            return idxA < idxB;
+        });
+    } else {
+        // Alphabetical sort - always group by section first
+        std::sort(m_Computers.begin(), m_Computers.end(),
+                  [&sectionOrder](NvComputer* a, NvComputer* b) {
+            int secA = sectionOrder.value(a->uuid, 2);
+            int secB = sectionOrder.value(b->uuid, 2);
+            if (secA != secB) return secA < secB;
+
+            QReadLocker lockA(&a->lock);
+            QReadLocker lockB(&b->lock);
+            return a->name.toLower() < b->name.toLower();
+        });
+    }
+}
+
+void ComputerModel::refreshSort()
+{
+    beginResetModel();
+    sortComputers();
+    endResetModel();
+}
+
+void ComputerModel::refreshData()
+{
+    if (m_Computers.isEmpty()) return;
+    emit dataChanged(createIndex(0, 0), createIndex(m_Computers.count() - 1, 0));
+}
+
+void ComputerModel::setSortMode(int mode)
+{
+    if (m_SortMode != mode) {
+        m_SortMode = mode;
+
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->pcSortMode = static_cast<StreamingPreferences::PcSortMode>(mode);
+        prefs->save();
+
+        beginResetModel();
+        sortComputers();
         endResetModel();
     }
-    else {
-        // Let the view know that this specific computer changed
-        int index = m_Computers.indexOf(computer);
-        emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+}
+
+int ComputerModel::getSortMode() const
+{
+    return m_SortMode;
+}
+
+void ComputerModel::moveComputer(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= m_Computers.count() ||
+        toIndex < 0 || toIndex >= m_Computers.count() ||
+        fromIndex == toIndex) {
+        return;
     }
+
+    // Switch to custom mode if not already
+    if (m_SortMode != 1) {
+        m_SortMode = 1;
+        StreamingPreferences* prefs = StreamingPreferences::get();
+        prefs->pcSortMode = StreamingPreferences::PSM_CUSTOM;
+        prefs->save();
+    }
+
+    int destIndex = toIndex > fromIndex ? toIndex + 1 : toIndex;
+    beginMoveRows(QModelIndex(), fromIndex, fromIndex, QModelIndex(), destIndex);
+    m_Computers.move(fromIndex, toIndex);
+    endMoveRows();
+
+    // Save custom order
+    m_CustomOrder.clear();
+    for (NvComputer* pc : m_Computers) {
+        m_CustomOrder.append(pc->uuid);
+    }
+    saveCustomOrder();
+}
+
+void ComputerModel::saveCustomOrder()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    prefs->setPcCustomOrder(m_CustomOrder);
+}
+
+void ComputerModel::loadCustomOrder()
+{
+    StreamingPreferences* prefs = StreamingPreferences::get();
+    m_CustomOrder = prefs->getPcCustomOrder();
+}
+
+QString ComputerModel::getSectionAt(int index) const
+{
+    if (index >= 0 && index < m_Computers.count()) {
+        return m_CachedSections.value(m_Computers[index]->uuid, tr("Offline"));
+    }
+    return QString();
 }
 
 #include "computermodel.moc"

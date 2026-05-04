@@ -51,6 +51,15 @@
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
+#define SER_APPSORTMODE "appsortmode"
+#define SER_APPVIEWMODE "appviewmode"
+#define SER_APPTILESCALE "apptilescale"
+#define SER_PCSORTMODE "pcsortmode"
+#define SER_PCTILESCALE "pctilescale"
+#define SER_PCSHOWSECTIONS "pcshowsections"
+#define SER_SHOWPCINFO "showpcinfo"
+#define SER_ENABLEPASSTHROUGH "enablepassthrough"
+#define SER_PASSTHROUGHPORT "passthroughport"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -168,6 +177,18 @@ void StreamingPreferences::reload()
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
+    appSortMode = static_cast<AppSortMode>(settings.value(SER_APPSORTMODE,
+                                                          static_cast<int>(AppSortMode::ASM_ALPHABETICAL)).toInt());
+    appViewMode = static_cast<AppViewMode>(settings.value(SER_APPVIEWMODE,
+                                                          static_cast<int>(AppViewMode::AVM_GRID)).toInt());
+    appTileScale = settings.value(SER_APPTILESCALE, 100).toInt();
+    pcSortMode = static_cast<PcSortMode>(settings.value(SER_PCSORTMODE,
+                                                        static_cast<int>(PcSortMode::PSM_ALPHABETICAL)).toInt());
+    pcTileScale = settings.value(SER_PCTILESCALE, 100).toInt();
+    pcShowSections = settings.value(SER_PCSHOWSECTIONS, true).toBool();
+    showPcInfo = settings.value(SER_SHOWPCINFO, false).toBool();
+    enablePassthrough = settings.value(SER_ENABLEPASSTHROUGH, false).toBool();
+    passthroughPort = settings.value(SER_PASSTHROUGHPORT, 47990).toInt();
 
 
     // Perform default settings updates as required based on last default version
@@ -366,6 +387,15 @@ void StreamingPreferences::save()
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_APPSORTMODE, static_cast<int>(appSortMode));
+    settings.setValue(SER_APPVIEWMODE, static_cast<int>(appViewMode));
+    settings.setValue(SER_APPTILESCALE, appTileScale);
+    settings.setValue(SER_PCSORTMODE, static_cast<int>(pcSortMode));
+    settings.setValue(SER_PCTILESCALE, pcTileScale);
+    settings.setValue(SER_PCSHOWSECTIONS, pcShowSections);
+    settings.setValue(SER_SHOWPCINFO, showPcInfo);
+    settings.setValue(SER_ENABLEPASSTHROUGH, enablePassthrough);
+    settings.setValue(SER_PASSTHROUGHPORT, passthroughPort);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
@@ -477,6 +507,8 @@ void StreamingPreferences::loadForClient(QString clientUuid)
                                                   static_cast<int>(videoDecoderSelection)).toInt());
     windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
                                                         static_cast<int>(windowMode)).toInt());
+    enablePassthrough = settings.value(SER_ENABLEPASSTHROUGH, enablePassthrough).toBool();
+    passthroughPort = settings.value(SER_PASSTHROUGHPORT, passthroughPort).toInt();
 
     settings.endGroup();
 
@@ -534,6 +566,8 @@ void StreamingPreferences::saveForClient(QString clientUuid)
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_ENABLEPASSTHROUGH, enablePassthrough);
+    settings.setValue(SER_PASSTHROUGHPORT, passthroughPort);
 
     settings.endGroup();
 
@@ -553,6 +587,65 @@ void StreamingPreferences::saveForClient(QString clientUuid)
             << "bitrate:" << bitrateKbps << "kbps";
 }
 
+void StreamingPreferences::deactivateClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to deactivate settings for empty client UUID";
+        return;
+    }
+
+    // Mark client settings as inactive but preserve the data
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    settings.setValue("_active", false);
+    settings.endGroup();
+    settings.sync();
+
+    if (m_CurrentClientUuid == clientUuid) {
+        m_CurrentClientUuid.clear();
+        reload(); // Reload global settings
+    }
+
+    qInfo() << "Deactivated client-specific settings for UUID:" << clientUuid;
+}
+
+void StreamingPreferences::activateClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        qWarning() << "Attempted to activate settings for empty client UUID";
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    QStringList keys = settings.childKeys();
+    // Filter out the _active flag to check if real settings data exists
+    keys.removeAll("_active");
+    bool hasSavedData = !keys.isEmpty();
+    settings.endGroup();
+
+    if (!hasSavedData) {
+        // No previously saved data: copy current global settings to client group.
+        // Ensure we're in global state first so we save correct values.
+        QString prevClientUuid = m_CurrentClientUuid;
+        if (!m_CurrentClientUuid.isEmpty()) {
+            reload(); // Restores global state, clears m_CurrentClientUuid
+        }
+        saveForClient(clientUuid);
+        // saveForClient sets m_CurrentClientUuid; clear it back to global
+        m_CurrentClientUuid.clear();
+    }
+
+    // Mark as active
+    settings.beginGroup("clients/" + clientUuid);
+    settings.setValue("_active", true);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Activated client-specific settings for UUID:" << clientUuid
+            << "(had saved data:" << hasSavedData << ")";
+}
+
 void StreamingPreferences::resetClientSettings(QString clientUuid)
 {
     if (clientUuid.isEmpty()) {
@@ -564,33 +657,48 @@ void StreamingPreferences::resetClientSettings(QString clientUuid)
     settings.beginGroup("clients");
     settings.remove(clientUuid);
     settings.endGroup();
+    settings.sync();
 
     if (m_CurrentClientUuid == clientUuid) {
         m_CurrentClientUuid.clear();
         reload(); // Reload global settings
     }
 
-    qInfo() << "Reset client-specific settings for UUID:" << clientUuid;
+    qInfo() << "Permanently deleted client-specific settings for UUID:" << clientUuid;
 }
 
 bool StreamingPreferences::hasClientSettings(QString clientUuid)
 {
     if (clientUuid.isEmpty()) {
-        qWarning() << "hasClientSettings called with empty UUID";
         return false;
     }
 
     QSettings settings;
     settings.beginGroup("clients/" + clientUuid);
     QStringList keys = settings.childKeys();
-    bool hasSettings = !keys.isEmpty();
+    keys.removeAll("_active");
+    bool hasData = !keys.isEmpty();
+    bool isActive = settings.value("_active", true).toBool();
     settings.endGroup();
 
-    qInfo() << "hasClientSettings for UUID:" << clientUuid
-            << "result:" << hasSettings
-            << "keys found:" << keys.count();
+    // Settings are "active" if data exists AND _active flag is true (default true for backward compat)
+    return hasData && isActive;
+}
 
-    return hasSettings;
+bool StreamingPreferences::hasSavedClientSettings(QString clientUuid)
+{
+    if (clientUuid.isEmpty()) {
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("clients/" + clientUuid);
+    QStringList keys = settings.childKeys();
+    keys.removeAll("_active");
+    bool hasData = !keys.isEmpty();
+    settings.endGroup();
+
+    return hasData;
 }
 
 QVariantMap StreamingPreferences::snapshotSettings() const
@@ -633,6 +741,8 @@ QVariantMap StreamingPreferences::snapshotSettings() const
     map[QStringLiteral("captureSysKeysMode")] = static_cast<int>(captureSysKeysMode);
     map[QStringLiteral("uiDisplayMode")] = static_cast<int>(uiDisplayMode);
     map[QStringLiteral("language")] = static_cast<int>(language);
+    map[QStringLiteral("enablePassthrough")] = enablePassthrough;
+    map[QStringLiteral("passthroughPort")] = passthroughPort;
     return map;
 }
 
@@ -675,11 +785,252 @@ void StreamingPreferences::restoreSettings(const QVariantMap& map)
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(map.value(QStringLiteral("captureSysKeysMode"), static_cast<int>(captureSysKeysMode)).toInt());
     uiDisplayMode = static_cast<UIDisplayMode>(map.value(QStringLiteral("uiDisplayMode"), static_cast<int>(uiDisplayMode)).toInt());
     language = static_cast<Language>(map.value(QStringLiteral("language"), static_cast<int>(language)).toInt());
+    enablePassthrough = map.value(QStringLiteral("enablePassthrough"), enablePassthrough).toBool();
+    passthroughPort = map.value(QStringLiteral("passthroughPort"), passthroughPort).toInt();
 
     m_CurrentClientUuid.clear();
     emitAllChanged();
 
     qInfo() << "Restored settings from snapshot";
+}
+
+// ---- Preset Management ----
+
+QStringList StreamingPreferences::getPresetNames() const
+{
+    QSettings settings;
+    settings.beginGroup("presets");
+    QStringList names = settings.childGroups();
+    settings.endGroup();
+    return names;
+}
+
+bool StreamingPreferences::presetExists(const QString& presetName) const
+{
+    if (presetName.isEmpty()) {
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+    bool exists = !settings.childKeys().isEmpty();
+    settings.endGroup();
+    return exists;
+}
+
+bool StreamingPreferences::savePreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to save preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+
+    // Save all streaming-related settings
+    settings.setValue(SER_WIDTH, width);
+    settings.setValue(SER_HEIGHT, height);
+    settings.setValue(SER_FPS, fps);
+    settings.setValue(SER_BITRATE, bitrateKbps);
+    settings.setValue(SER_UNLOCK_BITRATE, unlockBitrate);
+    settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
+    settings.setValue(SER_VSYNC, enableVsync);
+    settings.setValue(SER_GAMEOPTS, gameOptimizations);
+    settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
+    settings.setValue(SER_MULTICONT, multiController);
+    settings.setValue(SER_MDNS, enableMdns);
+    settings.setValue(SER_QUITAPPAFTER, quitAppAfter);
+    settings.setValue(SER_ABSMOUSEMODE, absoluteMouseMode);
+    settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
+    settings.setValue(SER_FRAMEPACING, framePacing);
+    settings.setValue(SER_CONNWARNINGS, connectionWarnings);
+    settings.setValue(SER_CONFWARNINGS, configurationWarnings);
+    settings.setValue(SER_RICHPRESENCE, richPresence);
+    settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
+    settings.setValue(SER_PACKETSIZE, packetSize);
+    settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
+    settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
+    settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
+    settings.setValue(SER_HDR, enableHdr);
+    settings.setValue(SER_YUV444, enableYUV444);
+    settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
+    settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
+    settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
+    settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
+    settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);
+    settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
+    settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
+    settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
+    settings.setValue(SER_CAPTURESYSKEYS, static_cast<int>(captureSysKeysMode));
+    settings.setValue(SER_KEEPAWAKE, keepAwake);
+
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Saved preset:" << presetName;
+    return true;
+}
+
+bool StreamingPreferences::loadPreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to load preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets/" + presetName);
+
+    if (settings.childKeys().isEmpty()) {
+        qWarning() << "Preset not found:" << presetName;
+        settings.endGroup();
+        return false;
+    }
+
+    // Load all settings from the preset with fallback to current values
+    width = settings.value(SER_WIDTH, width).toInt();
+    height = settings.value(SER_HEIGHT, height).toInt();
+    fps = settings.value(SER_FPS, fps).toInt();
+    bitrateKbps = settings.value(SER_BITRATE, bitrateKbps).toInt();
+    unlockBitrate = settings.value(SER_UNLOCK_BITRATE, unlockBitrate).toBool();
+    autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, autoAdjustBitrate).toBool();
+    enableVsync = settings.value(SER_VSYNC, enableVsync).toBool();
+    gameOptimizations = settings.value(SER_GAMEOPTS, gameOptimizations).toBool();
+    playAudioOnHost = settings.value(SER_HOSTAUDIO, playAudioOnHost).toBool();
+    multiController = settings.value(SER_MULTICONT, multiController).toBool();
+    enableMdns = settings.value(SER_MDNS, enableMdns).toBool();
+    quitAppAfter = settings.value(SER_QUITAPPAFTER, quitAppAfter).toBool();
+    absoluteMouseMode = settings.value(SER_ABSMOUSEMODE, absoluteMouseMode).toBool();
+    absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, absoluteTouchMode).toBool();
+    framePacing = settings.value(SER_FRAMEPACING, framePacing).toBool();
+    connectionWarnings = settings.value(SER_CONNWARNINGS, connectionWarnings).toBool();
+    configurationWarnings = settings.value(SER_CONFWARNINGS, configurationWarnings).toBool();
+    richPresence = settings.value(SER_RICHPRESENCE, richPresence).toBool();
+    gamepadMouse = settings.value(SER_GAMEPADMOUSE, gamepadMouse).toBool();
+    detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, detectNetworkBlocking).toBool();
+    showPerformanceOverlay = settings.value(SER_SHOWPERFOVERLAY, showPerformanceOverlay).toBool();
+    packetSize = settings.value(SER_PACKETSIZE, packetSize).toInt();
+    swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, swapMouseButtons).toBool();
+    muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, muteOnFocusLoss).toBool();
+    backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, backgroundGamepad).toBool();
+    reverseScrollDirection = settings.value(SER_REVERSESCROLL, reverseScrollDirection).toBool();
+    swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, swapFaceButtons).toBool();
+    keepAwake = settings.value(SER_KEEPAWAKE, keepAwake).toBool();
+    enableHdr = settings.value(SER_HDR, enableHdr).toBool();
+    enableYUV444 = settings.value(SER_YUV444, enableYUV444).toBool();
+    captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
+                                                         static_cast<int>(captureSysKeysMode)).toInt());
+    audioConfig = static_cast<AudioConfig>(settings.value(SER_AUDIOCFG,
+                                                  static_cast<int>(audioConfig)).toInt());
+    videoCodecConfig = static_cast<VideoCodecConfig>(settings.value(SER_VIDEOCFG,
+                                                  static_cast<int>(videoCodecConfig)).toInt());
+    videoDecoderSelection = static_cast<VideoDecoderSelection>(settings.value(SER_VIDEODEC,
+                                                  static_cast<int>(videoDecoderSelection)).toInt());
+    windowMode = static_cast<WindowMode>(settings.value(SER_WINDOWMODE,
+                                                        static_cast<int>(windowMode)).toInt());
+
+    settings.endGroup();
+
+    emitAllChanged();
+
+    qInfo() << "Loaded preset:" << presetName
+            << "resolution:" << width << "x" << height
+            << "fps:" << fps;
+    return true;
+}
+
+bool StreamingPreferences::deletePreset(const QString& presetName)
+{
+    if (presetName.isEmpty()) {
+        qWarning() << "Attempted to delete preset with empty name";
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup("presets");
+    settings.remove(presetName);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Deleted preset:" << presetName;
+    return true;
+}
+
+bool StreamingPreferences::renamePreset(const QString& oldName, const QString& newName)
+{
+    if (oldName.isEmpty() || newName.isEmpty()) {
+        qWarning() << "Attempted to rename preset with empty name";
+        return false;
+    }
+
+    if (oldName == newName) {
+        return true;
+    }
+
+    if (presetExists(newName)) {
+        qWarning() << "Cannot rename preset: target name already exists:" << newName;
+        return false;
+    }
+
+    QSettings settings;
+
+    // Read all settings from old preset
+    settings.beginGroup("presets/" + oldName);
+    QStringList keys = settings.childKeys();
+    QVariantMap values;
+    for (const QString& key : keys) {
+        values[key] = settings.value(key);
+    }
+    settings.endGroup();
+
+    if (values.isEmpty()) {
+        qWarning() << "Cannot rename preset: source not found:" << oldName;
+        return false;
+    }
+
+    // Write to new preset
+    settings.beginGroup("presets/" + newName);
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
+    settings.endGroup();
+
+    // Delete old preset
+    settings.beginGroup("presets");
+    settings.remove(oldName);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Renamed preset:" << oldName << "->" << newName;
+    return true;
+}
+
+void StreamingPreferences::applyPresetToClient(const QString& presetName, const QString& clientUuid)
+{
+    if (presetName.isEmpty() || clientUuid.isEmpty()) {
+        qWarning() << "Attempted to apply preset with empty name or client UUID";
+        return;
+    }
+
+    // Snapshot current state
+    QVariantMap savedState = snapshotSettings();
+
+    // Load preset into current singleton state
+    if (!loadPreset(presetName)) {
+        return;
+    }
+
+    // Save the loaded preset as client settings
+    saveForClient(clientUuid);
+
+    // Mark as active
+    activateClientSettings(clientUuid);
+
+    // Restore original global state
+    restoreSettings(savedState);
+
+    qInfo() << "Applied preset" << presetName << "to client" << clientUuid;
 }
 
 void StreamingPreferences::emitAllChanged()
@@ -718,4 +1069,210 @@ void StreamingPreferences::emitAllChanged()
     emit captureSysKeysModeChanged();
     emit keepAwakeChanged();
     emit languageChanged();
+    emit appSortModeChanged();
+    emit appViewModeChanged();
+    emit appTileScaleChanged();
+    emit pcSortModeChanged();
+    emit pcTileScaleChanged();
+    emit pcShowSectionsChanged();
+    emit showPcInfoChanged();
+    emit enablePassthroughChanged();
+    emit passthroughPortChanged();
+}
+
+// ---- Custom Order Management ----
+
+QStringList StreamingPreferences::getAppCustomOrder(const QString& computerUuid) const
+{
+    QSettings settings;
+    return settings.value("appCustomOrder/" + computerUuid).toStringList();
+}
+
+void StreamingPreferences::setAppCustomOrder(const QString& computerUuid, const QStringList& appIds)
+{
+    QSettings settings;
+    settings.setValue("appCustomOrder/" + computerUuid, appIds);
+    settings.sync();
+}
+
+QStringList StreamingPreferences::getPcCustomOrder() const
+{
+    QSettings settings;
+    return settings.value("pcCustomOrder").toStringList();
+}
+
+void StreamingPreferences::setPcCustomOrder(const QStringList& pcUuids)
+{
+    QSettings settings;
+    settings.setValue("pcCustomOrder", pcUuids);
+    settings.sync();
+}
+
+// ---- Folder Management ----
+
+QStringList StreamingPreferences::getAppFolders(const QString& computerUuid) const
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid);
+    QStringList folders = settings.childGroups();
+    settings.endGroup();
+    return folders;
+}
+
+void StreamingPreferences::createAppFolder(const QString& computerUuid, const QString& folderName)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    settings.setValue("created", true);
+    if (!settings.contains("apps")) {
+        settings.setValue("apps", QStringList());
+    }
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::deleteAppFolder(const QString& computerUuid, const QString& folderName)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid);
+    settings.remove(folderName);
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::renameAppFolder(const QString& computerUuid, const QString& oldName, const QString& newName)
+{
+    QSettings settings;
+    // Read apps from old folder
+    settings.beginGroup("appFolders/" + computerUuid + "/" + oldName);
+    QStringList apps = settings.value("apps").toStringList();
+    settings.endGroup();
+
+    // Create new folder with same apps
+    settings.beginGroup("appFolders/" + computerUuid + "/" + newName);
+    settings.setValue("created", true);
+    settings.setValue("apps", apps);
+    settings.endGroup();
+
+    // Delete old folder
+    settings.beginGroup("appFolders/" + computerUuid);
+    settings.remove(oldName);
+    settings.endGroup();
+    settings.sync();
+}
+
+QStringList StreamingPreferences::getAppsInFolder(const QString& computerUuid, const QString& folderName) const
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    QStringList apps = settings.value("apps").toStringList();
+    settings.endGroup();
+    return apps;
+}
+
+void StreamingPreferences::setAppsInFolder(const QString& computerUuid, const QString& folderName, const QStringList& appIds)
+{
+    QSettings settings;
+    settings.beginGroup("appFolders/" + computerUuid + "/" + folderName);
+    settings.setValue("apps", appIds);
+    settings.endGroup();
+    settings.sync();
+}
+
+void StreamingPreferences::addAppToFolder(const QString& computerUuid, const QString& folderName, const QString& appId)
+{
+    QStringList apps = getAppsInFolder(computerUuid, folderName);
+    if (!apps.contains(appId)) {
+        apps.append(appId);
+        setAppsInFolder(computerUuid, folderName, apps);
+    }
+}
+
+void StreamingPreferences::removeAppFromFolder(const QString& computerUuid, const QString& folderName, const QString& appId)
+{
+    QStringList apps = getAppsInFolder(computerUuid, folderName);
+    apps.removeAll(appId);
+    setAppsInFolder(computerUuid, folderName, apps);
+}
+
+QString StreamingPreferences::getAppFolder(const QString& computerUuid, const QString& appId) const
+{
+    QStringList folders = getAppFolders(computerUuid);
+    for (const QString& folder : folders) {
+        QStringList apps = getAppsInFolder(computerUuid, folder);
+        if (apps.contains(appId)) {
+            return folder;
+        }
+    }
+    return QString();
+}
+
+// ---- Custom Shortcut Management ----
+
+QVariantList StreamingPreferences::getCustomShortcuts() const
+{
+    QVariantList result;
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    QStringList actions = settings.childKeys();
+    for (const QString& action : actions) {
+        QVariantMap entry;
+        entry["action"] = action;
+        entry["shortcut"] = settings.value(action).toString();
+        result.append(entry);
+    }
+    settings.endGroup();
+    return result;
+}
+
+void StreamingPreferences::setCustomShortcut(const QString& action, const QString& shortcut)
+{
+    if (action.isEmpty()) return;
+
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    if (shortcut.isEmpty()) {
+        settings.remove(action);
+    } else {
+        settings.setValue(action, shortcut);
+    }
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Set custom shortcut:" << action << "=" << shortcut;
+}
+
+void StreamingPreferences::removeCustomShortcut(const QString& action)
+{
+    if (action.isEmpty()) return;
+
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    settings.remove(action);
+    settings.endGroup();
+    settings.sync();
+
+    qInfo() << "Removed custom shortcut for action:" << action;
+}
+
+QString StreamingPreferences::getShortcutForAction(const QString& action) const
+{
+    QSettings settings;
+    settings.beginGroup("shortcuts");
+    QString shortcut = settings.value(action).toString();
+    settings.endGroup();
+    return shortcut;
+}
+
+QStringList StreamingPreferences::getAvailableShortcutActions() const
+{
+    QStringList actions;
+    actions << "quit_stream"
+            << "toggle_perf_overlay"
+            << "toggle_fullscreen"
+            << "toggle_mouse_capture"
+            << "disconnect_stream"
+            << "toggle_mute"
+            << "toggle_minimize";
+    return actions;
 }

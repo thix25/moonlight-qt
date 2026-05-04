@@ -24,6 +24,8 @@ rem                  Also enables MSVC /MP multi-process compilation.
 rem    --upload     Copy the portable ZIP to the NAS AUTOCOPY folder.
 rem    --keepcfg    Same as --upload, but first injects Moonlight.ini
 rem                  from the NAS config folder into the ZIP.
+rem    --server     Also build the passthrough companion server
+rem                  (passthrough-server/build/Release/mlpt-server.exe).
 rem
 rem  Examples:
 rem    scripts\build-personal.bat                  (nmake, current version)
@@ -44,6 +46,7 @@ set "VERSION="
 set "MP_FLAG="
 set "DO_UPLOAD="
 set "DO_KEEPCFG="
+set "DO_SERVER="
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -60,6 +63,11 @@ if /I "%~1"=="--upload" (
 )
 if /I "%~1"=="--keepcfg" (
     set "DO_KEEPCFG=1"
+    shift
+    goto parse_args
+)
+if /I "%~1"=="--server" (
+    set "DO_SERVER=1"
     shift
     goto parse_args
 )
@@ -192,6 +200,8 @@ echo.
 echo ============================================================
 echo  Step 4: Run qmake
 echo ============================================================
+rem Delete stale generated RC file so qmake regenerates it with the current version
+if exist "%SOURCE_ROOT%\app\Moonlight_resource.rc" del /Q "%SOURCE_ROOT%\app\Moonlight_resource.rc"
 if defined USE_JOM (
     echo Running qmake with /MP flag for multi-process compilation...
     qmake moonlight-qt.pro "QMAKE_CXXFLAGS+=/MP" "QMAKE_CFLAGS+=/MP"
@@ -263,6 +273,47 @@ if !ERRORLEVEL! NEQ 0 (
     exit /b 1
 )
 echo OK - build-arch.bat completed
+
+echo.
+echo ============================================================
+echo  Step 7b: Build Passthrough Server (optional)
+echo ============================================================
+if not defined DO_SERVER (
+    echo Skipping - use --server to build the passthrough server.
+    goto skip_server
+)
+
+set "CMAKE_EXE=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+set "SERVER_SRC=%SOURCE_ROOT%\passthrough-server"
+set "SERVER_BUILD=%SERVER_SRC%\build"
+
+if not exist "%CMAKE_EXE%" (
+    echo ERROR: cmake not found at "%CMAKE_EXE%"
+    exit /b 1
+)
+
+if not exist "%SERVER_BUILD%" mkdir "%SERVER_BUILD%"
+
+echo Configuring passthrough server...
+cd /d "%SERVER_BUILD%"
+"%CMAKE_EXE%" .. -G "Visual Studio 18 2026" -A x64
+if !ERRORLEVEL! NEQ 0 (
+    echo ERROR: cmake configure failed
+    cd /d "%SOURCE_ROOT%"
+    exit /b 1
+)
+
+echo Building passthrough server...
+"%CMAKE_EXE%" --build . --config Release
+if !ERRORLEVEL! NEQ 0 (
+    echo ERROR: passthrough server build failed
+    cd /d "%SOURCE_ROOT%"
+    exit /b 1
+)
+cd /d "%SOURCE_ROOT%"
+echo OK - Passthrough server built: %SERVER_BUILD%\Release\mlpt-server.exe
+
+:skip_server
 
 echo.
 echo ============================================================

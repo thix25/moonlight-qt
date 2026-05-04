@@ -1,0 +1,122 @@
+for a lot of usb driver and blue tooth adaptater I have this error message : cannot caputree device : driver USBSTOR blocks libusb. USe Zadig to replace with winUSB or unplug the device. but what does it means ? because the goal of this project is to make usb passthrough so having usb and dongle and device passing how can I do this if libusb does not work ? or wat does it means ?
+
+Here's what this means and why it's actually by design:
+
+Why the error happens
+libusb needs exclusive raw USB access to a device to forward it over USB/IP. But Windows won't allow that when another kernel driver already owns the device:
+
+USBSTOR = Windows driver for USB mass storage (drives, dongles using storage class)
+bthusb = Windows Bluetooth stack driver
+HidUsb, usbvideo, etc. — same situation for other classes
+Windows's driver model: only one kernel driver can own a USB device at a time. libusb loses this fight unless WinUSB is substituted.
+
+What Zadig actually does
+Zadig replaces the device's current kernel driver with WinUSB, a generic Microsoft driver that lets user-mode applications (like libusb) talk directly to the USB device. After that, libusb wins.
+
+The trade-off — and why it's intentional for passthrough
+When you replace a BT adapter's driver with WinUSB:
+
+The local Windows BT stack (bthusb.sys) loses that adapter — your PC can no longer see local BT devices through it
+But the passthrough forwards the raw USB device to the remote PC, where the remote BT stack takes over and owns it there
+This is the whole point: the device is "detached" from the local PC and "given" to the remote PC. It's not a bug — it's the USB/IP model.
+
+
+
+What your code already handles without Zadig
+Looking at passthroughclient.cpp, the code takes a different path for BT:
+
+So for BT keyboards/mice/gamepads that are already HID-paired, no driver change is needed. The error only occurs when you try to forward the raw USB Bluetooth adapter itself (to give the remote PC a new BT radio entirely).
+
+Summary
+What you're forwarding	Needs Zadig?	Result on local PC
+BT HID device (already paired)	No	Works, uses Windows HID API
+USB BT adapter (whole radio)	Yes (WinUSB)	Local BT stack loses that adapter
+USB storage (USBSTOR)	Yes (WinUSB)	Local PC can't mount it anymore
+USB HID (keyboard/gamepad)	Usually no	libusb can co-exist with HID driver
+For a BT adapter specifically: yes, you'd lose it locally but the remote PC gains a BT radio it can use natively.
+
+ok I do not care if I lose the bluetooth adaptator it seems logic but I want this shit to work so how can I pass my fucking usb ? can moonlight automatically disconnect it form the client to pass to the server ? or should I do something manual with zadig or winusb ? I would like this to be seamless for the user by clicking on forward and it does all that stuff ...
+
+
+Good, I have everything I need. This is a non-trivial feature but completely doable. Here's what needs to happen:
+
+When you click Forward, instead of failing, Moonlight will:
+
+Generate a WinUSB .inf file in %TEMP%
+If not running as admin → trigger a one-time UAC prompt via a privileged subprocess
+Call UpdateDriverForPlugAndPlayDevicesW (the same API Zadig uses) — no Zadig needed
+Wait ~2s for Windows to re-enumerate the device with the new driver
+Retry the capture automatically
+Let me implement this now.
+
+Now patch passthroughclient.cpp — add the include and replace the blocking-driver failure path with the async auto-install flow:
+
+Now add the early-exit check to main.cpp — right after SDL_SetMainReady(), before any logging/GUI/SDL init:
+
+Let me verify the patched sections look correct:
+
+Read passthroughclient.cpp, lines 145 to 215
+
+Good. Now let me also update the repo memory to record this implementation:
+
+Updated memory file moonlight-qt-architecture.md
+
+Here's a summary of everything that was implemented:
+
+
+What was built
+New files: app/streaming/passthrough/winusbinstaller.h, app/streaming/passthrough/winusbinstaller.cpp
+
+Modified files: app/streaming/passthrough/passthroughclient.cpp, app/main.cpp, app/app.pro
+
+Flow when you click Forward on a blocked device
+What the user sees
+Status briefly shows "Installing WinUSB driver (UAC prompt may appear)…"
+One UAC prompt (if Moonlight isn't already admin)
+Forwarding proceeds automatically — no Zadig, no manual steps
+Caveats
+The WinUSB driver stays on the device (same behavior as Zadig) — to go back to the original driver, use Device Manager → Update driver → "Browse my computer" → "Let me pick from a list"
+For a BT adapter: your local PC loses that BT radio after the switch (it's now owned by the remote PC)
+If the user hits Cancel on UAC, the error message will say "WinUSB installation cancelled"
+
+
+
+
+
+
+
+
+
+and how virtualhere is doing his thing ? and making this work ? 
+
+
+irtualHere solves this at a completely different level — and understanding it explains exactly why our approach requires a driver swap while theirs doesn't.
+
+How VirtualHere works (the fundamental difference)
+Our approach: user-mode (libusb)
+libusb runs entirely in user space. Windows won't let a user-mode application open a device that an existing kernel driver has already claimed. Hence the need to replace the driver.
+
+VirtualHere's approach: kernel-mode filter driver
+VirtualHere installs vhusb64.sys as a WDM lower filter driver on the USB hub or device stack. It sits below the class driver in the kernel device stack. When you click "Use" on a device:
+
+It sends a surprise removal IRP (IRP_MN_SURPRISE_REMOVAL) to the existing class driver — effectively tells USBSTOR/HidUsb/etc. "your device just vanished"
+The class driver releases its handles and unloads from the device
+VirtualHere's filter driver now exclusively owns the raw USB traffic at the kernel level
+It redirects all USB URBs over the network to the server
+No driver replacement, no Zadig, no UAC prompt — because it's already running in the kernel with the authority to do all of this.
+
+
+Why we can't trivially do the same
+VirtualHere	Our implementation
+Driver level	Kernel (Ring 0)	User mode (Ring 3)
+Driver signing	EV certificate + WHQL	Not required
+Can eject class drivers	Yes, via IRP	No
+Requires driver swap	Never	Once per device type
+Complexity	Huge (kernel dev)	Manageable
+UAC prompt	Never	Once (our auto-install)
+Kernel drivers on modern Windows (since Win10 2016) require WHQL certification or an EV code-signing certificate + Microsoft attestation signing to load. This is a paid, weeks-long process — not feasible for a hobby project.
+
+A middle ground that exists in our codebase
+Our passthrough-server/ already uses usbip-win2, which IS a kernel-mode VHCI driver (server side). On the client side, usbip-win2 also has a stub driver (usbip_stub.sys) designed exactly to replace class drivers for forwarded devices. It's purpose-built for USB/IP — more appropriate than WinUSB for our use case but has the same limitation: you still need to swap the driver once (it just stays put for future sessions).
+
+The auto-WinUSB install we just added is essentially doing what the usbip-win2 stub installer does, but integrated into Moonlight so the user never touches Zadig. One UAC prompt, one time per device type — then it's seamless forever after, including auto-forward on reconnect.

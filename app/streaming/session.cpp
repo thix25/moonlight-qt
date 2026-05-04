@@ -2,6 +2,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
+#include "passthrough/passthroughclient.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -586,7 +587,8 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_OpusDecoder(nullptr),
       m_AudioRenderer(nullptr),
       m_AudioSampleCount(0),
-      m_DropAudioEndTime(0)
+      m_DropAudioEndTime(0),
+      m_PassthroughClient(nullptr)
 {
     // If we don't have custom preferences and client has specific settings, load them
     if (!preferences && m_Computer && m_Preferences->hasClientSettings(m_Computer->uuid)) {
@@ -609,6 +611,11 @@ Session::~Session()
     // Use Session::exec() or DeferredSessionCleanupTask instead.
 
     SDL_DestroyMutex(m_DecoderLock);
+}
+
+QObject* Session::passthroughClient() const
+{
+    return m_PassthroughClient;
 }
 
 bool Session::initialize(QQuickWindow* qtWindow)
@@ -1297,6 +1304,8 @@ private:
         SDL_assert(m_Session->m_VideoDecoder == nullptr);
 
         // Finish cleanup of the connection state
+        // NOTE: PassthroughClient cleanup is done in Session::exec() on the main thread
+        // since it owns QTcpSocket/QTimer which have main-thread affinity.
         LiStopConnection();
 
         // Perform a best-effort app quit
@@ -1706,6 +1715,10 @@ bool Session::startConnectionAsync()
     }
 
     emit connectionStarted();
+
+    // NOTE: PassthroughClient is started later in Session::exec() on the main thread
+    // because it uses QTcpSocket/QTimer which require a running event loop.
+
     return true;
 }
 
@@ -1771,6 +1784,17 @@ void Session::exec()
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
         return;
+    }
+
+    // Start passthrough client on the main thread (requires event loop for QTcpSocket/QTimer)
+    if (m_Preferences->enablePassthrough && m_Computer) {
+        m_PassthroughClient = new PassthroughClient(this);
+        m_PassthroughClient->connectToServer(
+            m_Computer->activeAddress.address(),
+            static_cast<uint16_t>(m_Preferences->passthroughPort));
+        qInfo() << "Passthrough client started, connecting to"
+                << m_Computer->activeAddress.address()
+                << ":" << m_Preferences->passthroughPort;
     }
 
     // Pump the Qt event loop one last time before we create our SDL window
@@ -1856,6 +1880,14 @@ void Session::exec()
             delete m_InputHandler;
             m_InputHandler = nullptr;
             SDL_QuitSubSystem(SDL_INIT_VIDEO);
+
+            // Clean up passthrough client on the main thread
+            if (m_PassthroughClient) {
+                m_PassthroughClient->disconnectFromServer();
+                delete m_PassthroughClient;
+                m_PassthroughClient = nullptr;
+            }
+
             QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
             return;
         }
@@ -2389,6 +2421,13 @@ DispatchDeferredCleanup:
     }
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
+
+    // Clean up passthrough client on the main thread (it owns QTcpSocket/QTimer)
+    if (m_PassthroughClient) {
+        m_PassthroughClient->disconnectFromServer();
+        delete m_PassthroughClient;
+        m_PassthroughClient = nullptr;
+    }
 
     // Cleanup can take a while, so dispatch it to a worker thread.
     // When it is complete, it will release our s_ActiveSessionSemaphore
