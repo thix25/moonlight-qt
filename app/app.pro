@@ -206,6 +206,7 @@ SOURCES += \
     streaming/passthrough/usbipexporter.cpp \
     streaming/passthrough/usbipdaemon.cpp \
     streaming/passthrough/bthidcapture.cpp \
+    streaming/passthrough/winusbinstaller.cpp \
     gui/computermodel.cpp \
     gui/appmodel.cpp \
     streaming/bandwidth.cpp \
@@ -250,6 +251,7 @@ HEADERS += \
     streaming/passthrough/usbipexporter.h \
     streaming/passthrough/usbipdaemon.h \
     streaming/passthrough/bthidcapture.h \
+    streaming/passthrough/winusbinstaller.h \
     gui/computermodel.h \
     gui/appmodel.h \
     streaming/video/decoder.h \

@@ -33,6 +33,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include "streaming/passthrough/winusbinstaller.h"
 #elif defined(Q_OS_LINUX)
 #include <openssl/ssl.h>
 #endif
@@ -398,6 +399,17 @@ void configureSignalHandlers()
 int main(int argc, char *argv[])
 {
     SDL_SetMainReady();
+
+#if defined(Q_OS_WIN32)
+    // Early-exit for the elevated WinUSB-installer subprocess spawned by WinUsbInstaller.
+    // We check argv directly (before any Qt/SDL init) to keep the subprocess lightweight.
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--install-winusb") == 0) {
+            QCoreApplication coreApp(argc, argv);
+            return WinUsbInstaller::elevatedInstallMain(coreApp.arguments());
+        }
+    }
+#endif
 
     // Set the app version for the QCommandLineParser's showVersion() command
     QCoreApplication::setApplicationVersion(VERSION_STR);
