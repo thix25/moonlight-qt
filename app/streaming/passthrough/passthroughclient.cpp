@@ -145,7 +145,10 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         exporter->setDeviceId(deviceId);
 
         if (!exporter->openDevice(devInfo->vendorId, devInfo->productId, devInfo->serialNumber)) {
-            qWarning() << "Failed to open device" << deviceId << "with libusb";
+            qWarning() << "Failed to open device" << deviceId
+                       << devInfo->name
+                       << QString::asprintf("(%04x:%04x)", devInfo->vendorId, devInfo->productId)
+                       << "with libusb";
             delete exporter;
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
@@ -184,6 +187,8 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         startAttachTimeout(deviceId);
 
         qInfo() << "Requested attach for USB device" << deviceId
+                << devInfo->name
+                << QString::asprintf("(%04x:%04x)", devInfo->vendorId, devInfo->productId)
                 << "(captured with libusb, descriptors sent)"
                 << (m_ServerBackend == MlptProtocol::VHCI_BACKEND_WIN2 ? "[win2]" : "[legacy]");
 
@@ -264,6 +269,7 @@ void PassthroughClient::detachDevice(uint32_t deviceId)
         return;
     }
 
+    cancelAttachTimeout(deviceId);
     cleanupExporter(deviceId);
     cleanupBtCapture(deviceId);
 
