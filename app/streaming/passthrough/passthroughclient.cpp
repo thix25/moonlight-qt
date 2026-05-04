@@ -2,8 +2,10 @@
 #include "usbipexporter.h"
 #include "bthidcapture.h"
 #include "usbipdaemon.h"
+#include "winusbinstaller.h"
 
 #include <QRandomGenerator>
+#include <QThread>
 #include <QtDebug>
 
 PassthroughClient::PassthroughClient(QObject* parent)
@@ -155,16 +157,54 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
                        << "with libusb"
                        << "(driver:" << devInfo->driver << ", serial:" << devInfo->serialNumber << ")";
             delete exporter;
-            QString errMsg;
+
+            // If a kernel driver (e.g. USBSTOR, bthusb) is blocking libusb,
+            // automatically install WinUSB in a background thread — same operation
+            // Zadig performs, but triggered transparently on Forward click.
             if (!devInfo->driver.isEmpty() &&
                 devInfo->driver.compare("WinUSB", Qt::CaseInsensitive) != 0) {
-                errMsg = tr("Cannot capture device — driver \"%1\" blocks libusb. "
-                            "Use Zadig to replace with WinUSB, or replug the device.")
-                             .arg(devInfo->driver);
-            } else {
-                errMsg = tr("Failed to open device (check driver or replug)");
+
+                qInfo() << "Passthrough: driver" << devInfo->driver
+                        << "blocks libusb for" << devInfo->name
+                        << "— attempting automatic WinUSB installation";
+
+                m_DeviceEnumerator.setDeviceError(
+                    deviceId,
+                    tr("Installing WinUSB driver (UAC prompt may appear)…"));
+
+                uint16_t vid          = devInfo->vendorId;
+                uint16_t pid          = devInfo->productId;
+                QString  instancePath = devInfo->instancePath;
+                QString  name         = devInfo->name;
+
+                QThread* installerThread = QThread::create(
+                    [this, deviceId, vid, pid, instancePath, name]() {
+                        QString err = WinUsbInstaller::installForDevice(
+                            vid, pid, instancePath, name);
+
+                        // Re-enumerate and retry (or report failure) on the main thread.
+                        // Qt will silently discard the invocation if 'this' was destroyed.
+                        QMetaObject::invokeMethod(this, [this, deviceId, err]() {
+                            if (!err.isEmpty()) {
+                                m_DeviceEnumerator.setDeviceError(deviceId, err);
+                                emit deviceAttachFailed(deviceId,
+                                                        MlptProtocol::ATTACH_ERR_FAILED);
+                            } else {
+                                // Driver replaced — re-scan device list, then retry.
+                                m_DeviceEnumerator.enumerate();
+                                attachDevice(deviceId);
+                            }
+                        }, Qt::QueuedConnection);
+                    });
+
+                connect(installerThread, &QThread::finished,
+                        installerThread, &QThread::deleteLater);
+                installerThread->start();
+                return;
             }
-            m_DeviceEnumerator.setDeviceError(deviceId, errMsg);
+
+            m_DeviceEnumerator.setDeviceError(
+                deviceId, tr("Failed to open device (check driver or replug)"));
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
         }
