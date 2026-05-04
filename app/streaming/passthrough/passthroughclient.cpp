@@ -132,9 +132,13 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
 
     if (!devInfo) {
         qWarning() << "Device" << deviceId << "not found in enumerator";
+        m_DeviceEnumerator.setDeviceError(deviceId, tr("Device not found"));
         emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
         return;
     }
+
+    // Clear any previous error
+    m_DeviceEnumerator.setDeviceError(deviceId, QString());
 
     // USB devices: use libusb (UsbIpExporter)
     // Bluetooth HID devices: use Windows HID API (BtHidCapture)
@@ -150,6 +154,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
                        << QString::asprintf("(%04x:%04x)", devInfo->vendorId, devInfo->productId)
                        << "with libusb";
             delete exporter;
+            m_DeviceEnumerator.setDeviceError(deviceId, tr("Failed to open device (check driver or replug)"));
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
         }
@@ -200,6 +205,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
             dc != MlptProtocol::DEVCLASS_HID_GAMEPAD &&
             dc != MlptProtocol::DEVCLASS_HID_OTHER) {
             qWarning() << "Device" << deviceId << "is a non-HID Bluetooth device, cannot forward";
+            m_DeviceEnumerator.setDeviceError(deviceId, tr("Non-HID Bluetooth devices are not supported"));
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
         }
@@ -211,6 +217,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
         if (!capture->openDevice(devInfo->serialNumber, devInfo->vendorId, devInfo->productId)) {
             qWarning() << "Failed to open BT HID device" << deviceId << devInfo->name;
             delete capture;
+            m_DeviceEnumerator.setDeviceError(deviceId, tr("Failed to open Bluetooth HID device"));
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
         }
@@ -258,6 +265,7 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
 
     } else {
         qWarning() << "Device" << deviceId << "has unsupported transport" << devInfo->transport;
+        m_DeviceEnumerator.setDeviceError(deviceId, tr("Unsupported device transport"));
         emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
         return;
     }
@@ -265,6 +273,11 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
 
 void PassthroughClient::detachDevice(uint32_t deviceId)
 {
+    // Immediately mark as not forwarding so the UI updates right away,
+    // rather than waiting for the server's DETACH_ACK which may never come.
+    m_DeviceEnumerator.setDeviceForwarding(deviceId, false);
+    m_DeviceEnumerator.setDeviceError(deviceId, QString());
+
     if (!m_Connected) {
         return;
     }
@@ -803,10 +816,24 @@ void PassthroughClient::processMessage(const MlptProtocol::Header& header, const
 
         if (ack->status == MlptProtocol::ATTACH_OK) {
             qInfo() << "Passthrough: device" << ack->deviceId << "attached on VHCI port" << ack->vhciPort;
+            m_DeviceEnumerator.setDeviceError(ack->deviceId, QString());
             m_DeviceEnumerator.setDeviceForwarding(ack->deviceId, true);
             emit deviceAttached(ack->deviceId, ack->vhciPort);
         } else {
             qWarning() << "Passthrough: device" << ack->deviceId << "attach failed, status:" << ack->status;
+            QString errorMsg;
+            switch (ack->status) {
+            case MlptProtocol::ATTACH_ERR_BUSY:
+                errorMsg = tr("Device is busy on the server");
+                break;
+            case MlptProtocol::ATTACH_ERR_DRIVER:
+                errorMsg = tr("VHCI driver not available on server");
+                break;
+            default:
+                errorMsg = tr("Server rejected the device");
+                break;
+            }
+            m_DeviceEnumerator.setDeviceError(ack->deviceId, errorMsg);
             // Clean up the exporter/capture that was optimistically created in attachDevice()
             // so the device can be retried later instead of staying stuck as "already exported".
             cleanupExporter(ack->deviceId);
@@ -882,6 +909,7 @@ void PassthroughClient::startAttachTimeout(uint32_t deviceId)
         // Remove the timer
         cancelAttachTimeout(deviceId);
 
+        m_DeviceEnumerator.setDeviceError(deviceId, tr("Attach timed out, no response from server"));
         emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
     });
     m_PendingAttachTimers.insert(deviceId, timer);

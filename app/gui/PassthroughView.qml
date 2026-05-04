@@ -358,6 +358,15 @@ Item {
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: 180
                                 }
+
+                                Label {
+                                    visible: model.storageSizeText !== ""
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? model.storageSizeText : ""
+                                    font.pointSize: 9
+                                    color: "#90B0D0"
+                                    font.bold: true
+                                }
                             }
 
                             // Row 3: serial, location, driver, battery, added time
@@ -416,6 +425,17 @@ Item {
                                     color: "#606060"
                                     font.family: "Consolas,monospace"
                                 }
+                            }
+
+                            // Row 4: error message (if any)
+                            Label {
+                                visible: model.lastError !== ""
+                                height: visible ? implicitHeight : 0
+                                text: visible ? "\u26A0 " + model.lastError : ""
+                                font.pointSize: 9
+                                color: "#FF5252"
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
                             }
                         }
 
@@ -545,6 +565,8 @@ Item {
                 driver: enumerator.data(idx, 274),          // DriverRole
                 manufacturer: enumerator.data(idx, 275),    // ManufacturerRole
                 addedTimeMs: (function() { var dt = enumerator.data(idx, 276); return dt ? dt.getTime() : 0; })(), // AddedTimeRole
+                storageSizeText: enumerator.data(idx, 277) || "", // StorageSizeTextRole
+                lastError: enumerator.data(idx, 278) || "",       // LastErrorRole
                 sourceIndex: i,
                 sectionKey: "" + enumerator.data(idx, 261)  // transport as string for section
             }
