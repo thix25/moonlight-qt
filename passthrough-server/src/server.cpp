@@ -118,7 +118,12 @@ void PassthroughServer::stop()
 
 void PassthroughServer::acceptLoop()
 {
+    int consecutiveErrors = 0;
+
     while (m_Running) {
+        // Periodically clean up disconnected clients
+        cleanupDisconnectedClients();
+
         sockaddr_in clientAddr{};
         int addrLen = sizeof(clientAddr);
 
@@ -126,10 +131,23 @@ void PassthroughServer::acceptLoop()
                                       reinterpret_cast<sockaddr*>(&clientAddr), &addrLen);
         if (clientSocket == INVALID_SOCKET) {
             if (m_Running) {
-                log("Accept failed: " + std::to_string(WSAGetLastError()));
+                int err = WSAGetLastError();
+                log("Accept failed: " + std::to_string(err));
+
+                consecutiveErrors++;
+                if (consecutiveErrors > 10) {
+                    log("Too many consecutive accept errors, pausing 5s before retry");
+                    // Sleep briefly to avoid busy-loop on persistent errors
+                    for (int i = 0; i < 50 && m_Running; i++) {
+                        Sleep(100);
+                    }
+                    consecutiveErrors = 0;
+                }
             }
             continue;
         }
+
+        consecutiveErrors = 0;
 
         int nodelay = 1;
         setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY,
@@ -154,6 +172,22 @@ void PassthroughServer::acceptLoop()
         }
 
         notifyStatusChange();
+    }
+}
+
+void PassthroughServer::cleanupDisconnectedClients()
+{
+    std::lock_guard<std::mutex> lock(m_ClientsMutex);
+    auto it = m_Clients.begin();
+    while (it != m_Clients.end()) {
+        if (!(*it)->running && (*it)->socket == INVALID_SOCKET) {
+            if ((*it)->thread.joinable()) {
+                (*it)->thread.join();
+            }
+            it = m_Clients.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 

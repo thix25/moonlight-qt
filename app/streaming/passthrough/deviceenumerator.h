@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QDateTime>
 
 #include "protocol.h"
 
@@ -14,12 +15,16 @@ struct PassthroughDevice {
     uint16_t vendorId;
     uint16_t productId;
     QString  name;
+    QString  manufacturer;    // USB manufacturer string or BT vendor
     QString  serialNumber;
     QString  instancePath;    // Windows device instance path
+    QString  locationInfo;    // Physical USB port location (e.g. "Port_#0003.Hub_#0002")
+    QString  driver;          // Active driver name (e.g. "usbvideo", "WinUSB")
     uint8_t  transport;       // MlptProtocol::DeviceTransport
     uint8_t  deviceClass;     // MlptProtocol::DeviceClass
     bool     isForwarding;
     bool     autoForward;
+    QDateTime addedTime;      // When the device was first seen
 
     // Bluetooth-specific
     int8_t   batteryPercent;  // -1 if unknown
@@ -52,6 +57,10 @@ public:
         RssiRole,
         BtPairedRole,
         BtConnectedRole,
+        LocationInfoRole,
+        DriverRole,
+        ManufacturerRole,
+        AddedTimeRole,
     };
 
     explicit DeviceEnumerator(QObject* parent = nullptr);

@@ -58,6 +58,7 @@ public:
 private:
     void acceptLoop();
     void clientLoop(ClientConnection* client);
+    void cleanupDisconnectedClients();
 
     bool sendMessage(ClientConnection* client, MlptProtocol::MsgType type,
                      const void* payload = nullptr, uint32_t payloadLen = 0);

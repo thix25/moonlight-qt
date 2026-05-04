@@ -3,6 +3,7 @@
 #include <QtDebug>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QDateTime>
 
 #ifdef Q_OS_WIN32
 #include <Windows.h>
@@ -76,6 +77,14 @@ QVariant DeviceEnumerator::data(const QModelIndex& index, int role) const
         return QString("%1:%2")
             .arg(dev.vendorId, 4, 16, QLatin1Char('0'))
             .arg(dev.productId, 4, 16, QLatin1Char('0'));
+    case LocationInfoRole:
+        return dev.locationInfo;
+    case DriverRole:
+        return dev.driver;
+    case ManufacturerRole:
+        return dev.manufacturer;
+    case AddedTimeRole:
+        return dev.addedTime;
     default:
         return QVariant();
     }
@@ -100,6 +109,10 @@ QHash<int, QByteArray> DeviceEnumerator::roleNames() const
         { RssiRole,           "rssi" },
         { BtPairedRole,       "btPaired" },
         { BtConnectedRole,    "btConnected" },
+        { LocationInfoRole,   "locationInfo" },
+        { DriverRole,         "driver" },
+        { ManufacturerRole,   "manufacturer" },
+        { AddedTimeRole,      "addedTime" },
     };
 }
 
@@ -309,6 +322,18 @@ void DeviceEnumerator::enumerateUsb()
         QString deviceClass = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_CLASS);
         QString compatIds = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_COMPATIBLEIDS);
 
+        // Get physical USB port location for distinguishing identical devices
+        QString locationInfo = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_LOCATION_INFORMATION);
+        // Clean up common prefixes to keep the label short
+        locationInfo.remove(QRegularExpression("^Port_#"));
+        locationInfo.replace(QRegularExpression("\\.Hub_#"), " Hub ");
+
+        // Get manufacturer string
+        QString manufacturer = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_MFG);
+
+        // Get active driver name (e.g. "usbvideo", "WinUSB", "usbstor")
+        QString driverName = getDeviceRegistryProperty(devInfo, &devInfoData, SPDRP_SERVICE);
+
         // Extract serial from instance path (3rd segment after \\)
         QString serial;
         QStringList pathParts = instancePath.split('\\');
@@ -323,12 +348,16 @@ void DeviceEnumerator::enumerateUsb()
         dev.vendorId = vid;
         dev.productId = pid;
         dev.name = friendlyName;
+        dev.manufacturer = manufacturer;
         dev.serialNumber = serial;
         dev.instancePath = instancePath;
+        dev.locationInfo = locationInfo;
+        dev.driver = driverName;
         dev.transport = MlptProtocol::TRANSPORT_USB;
         dev.deviceClass = classifyUsbDevice(deviceClass, compatIds);
         dev.isForwarding = false;
         dev.autoForward = false;
+        dev.addedTime = QDateTime::currentDateTime();
         dev.batteryPercent = -1;
         dev.rssi = 0;
         dev.btPaired = false;
@@ -440,9 +469,13 @@ void DeviceEnumerator::enumerateBluetooth()
             .arg(deviceInfo.Address.rgBytes[1], 2, 16, QLatin1Char('0'))
             .arg(deviceInfo.Address.rgBytes[0], 2, 16, QLatin1Char('0'));
         dev.instancePath.clear();
+        dev.locationInfo.clear();
+        dev.driver.clear();
+        dev.manufacturer.clear();
         dev.transport = MlptProtocol::TRANSPORT_BLUETOOTH;
         dev.isForwarding = false;
         dev.autoForward = false;
+        dev.addedTime = QDateTime::currentDateTime();
         dev.btPaired = deviceInfo.fAuthenticated;
         dev.btConnected = deviceInfo.fConnected;
         dev.rssi = 0;
@@ -657,11 +690,13 @@ void DeviceEnumerator::pollHotplug()
     QHash<QString, bool> forwardingState;
     QHash<QString, bool> autoForwardState;
     QHash<QString, uint32_t> oldIdMap;
+    QHash<QString, QDateTime> oldAddedTime;
     for (const auto& dev : oldDevices) {
         QString fp = makeFp(dev);
         forwardingState.insert(fp, dev.isForwarding);
         autoForwardState.insert(fp, dev.autoForward);
         oldIdMap.insert(fp, dev.deviceId);
+        oldAddedTime.insert(fp, dev.addedTime);
     }
 
     beginResetModel();
@@ -674,6 +709,7 @@ void DeviceEnumerator::pollHotplug()
             dev.deviceId = oldIdMap[fp];
             dev.isForwarding = forwardingState.value(fp, false);
             dev.autoForward = autoForwardState.value(fp, false);
+            dev.addedTime = oldAddedTime.value(fp, dev.addedTime);
         }
     }
 

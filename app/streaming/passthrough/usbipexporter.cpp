@@ -189,11 +189,13 @@ bool UsbIpExporter::openDeviceByPath(uint8_t busNumber, uint8_t portNumber)
     return true;
 }
 
+// Forward declaration for UrbContext used in closeDevice cleanup
+struct UrbContext;
+
 void UsbIpExporter::closeDevice()
 {
-    stopEventThread();
-
-    // Cancel all pending transfers
+    // Cancel all pending transfers FIRST so the event thread can process
+    // cancellation callbacks cleanly before we shut it down.
     {
         QMutexLocker lock(&m_TransfersMutex);
         for (auto* xfer : m_PendingTransfers) {
@@ -202,15 +204,22 @@ void UsbIpExporter::closeDevice()
     }
 
     // Process remaining events briefly to let cancellations complete
+    // while the event thread is still running.
     if (s_LibusbCtx && m_DeviceHandle) {
-        struct timeval tv = { 0, 100000 }; // 100ms
+        struct timeval tv = { 0, 200000 }; // 200ms
         libusb_handle_events_timeout(s_LibusbCtx, &tv);
     }
 
-    // Free any remaining transfers
+    // Now stop the event thread — all cancellation callbacks should have fired.
+    stopEventThread();
+
+    // Free any transfers that weren't cleaned up by callbacks
     {
         QMutexLocker lock(&m_TransfersMutex);
         for (auto* xfer : m_PendingTransfers) {
+            if (xfer->buffer) free(xfer->buffer);
+            auto* ctx = static_cast<UrbContext*>(xfer->user_data);
+            delete ctx;
             libusb_free_transfer(xfer);
         }
         m_PendingTransfers.clear();
@@ -332,9 +341,19 @@ void UsbIpExporter::releaseAllInterfaces()
     if (!m_DeviceHandle) return;
 
     for (int i : m_ClaimedInterfaces) {
-        libusb_release_interface(m_DeviceHandle, i);
+        int rc = libusb_release_interface(m_DeviceHandle, i);
+        if (rc != 0 && rc != LIBUSB_ERROR_NO_DEVICE) {
+            qWarning() << "UsbIpExporter: failed to release interface" << i
+                       << "for device" << m_DeviceId
+                       << ":" << libusb_strerror(static_cast<libusb_error>(rc));
+        }
         // Re-attach kernel driver so the device comes back on the client
-        libusb_attach_kernel_driver(m_DeviceHandle, i);
+        rc = libusb_attach_kernel_driver(m_DeviceHandle, i);
+        if (rc != 0 && rc != LIBUSB_ERROR_NOT_SUPPORTED && rc != LIBUSB_ERROR_NO_DEVICE) {
+            qWarning() << "UsbIpExporter: failed to reattach kernel driver on interface" << i
+                       << "for device" << m_DeviceId
+                       << ":" << libusb_strerror(static_cast<libusb_error>(rc));
+        }
     }
     m_ClaimedInterfaces.clear();
 }

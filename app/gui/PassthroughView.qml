@@ -14,6 +14,10 @@ Item {
     id: passthroughView
 
     property var passthroughClient: null
+    property string searchText: ""
+    property int sortMode: 0       // 0=default, 1=name, 2=VID:PID, 3=last added, 4=class
+    property int filterTransport: 0 // 0=all, 1=USB only, 2=BT only
+    property int filterClass: 0     // 0=all, 1=keyboard, 2=mouse, 3=gamepad, 5=storage, 6=audio, 7=webcam
 
     signal closeRequested()
 
@@ -30,8 +34,8 @@ Item {
     Rectangle {
         id: panel
         anchors.centerIn: parent
-        width: Math.min(parent.width * 0.85, 700)
-        height: Math.min(parent.height * 0.85, 600)
+        width: Math.min(parent.width * 0.92, 960)
+        height: Math.min(parent.height * 0.90, 720)
         color: "#303030"
         radius: 8
         border.color: "#505050"
@@ -46,7 +50,7 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
-            spacing: 10
+            spacing: 8
 
             // ─── title bar ───
             RowLayout {
@@ -104,10 +108,131 @@ Item {
                 }
             }
 
+            // ─── search & filter bar ───
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                // Search field
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 32
+                    color: "#404040"
+                    radius: 4
+                    border.color: searchField.activeFocus ? "#4CAF50" : "#555555"
+                    border.width: 1
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        spacing: 4
+
+                        Label {
+                            text: "\uD83D\uDD0D" // 🔍
+                            font.pointSize: 12
+                            color: "#909090"
+                        }
+
+                        TextInput {
+                            id: searchField
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            color: "white"
+                            font.pointSize: 10
+                            clip: true
+                            verticalAlignment: TextInput.AlignVCenter
+                            selectByMouse: true
+
+                            onTextChanged: searchText = text
+
+                            // Placeholder
+                            Text {
+                                anchors.fill: parent
+                                verticalAlignment: Text.AlignVCenter
+                                text: qsTr("Search by name, VID:PID, manufacturer, serial...")
+                                color: "#707070"
+                                font.pointSize: 10
+                                visible: searchField.text.length === 0 && !searchField.activeFocus
+                            }
+                        }
+
+                        // Clear button
+                        Label {
+                            text: "\u2715" // ✕
+                            font.pointSize: 10
+                            color: "#909090"
+                            visible: searchField.text.length > 0
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: { searchField.text = "" }
+                            }
+                        }
+                    }
+                }
+
+                // Transport filter
+                ComboBox {
+                    id: transportFilter
+                    implicitWidth: 110
+                    model: [qsTr("All types"), qsTr("USB only"), qsTr("BT only")]
+                    currentIndex: filterTransport
+                    onCurrentIndexChanged: filterTransport = currentIndex
+                }
+
+                // Class filter
+                ComboBox {
+                    id: classFilter
+                    implicitWidth: 130
+                    model: [
+                        qsTr("All classes"),
+                        qsTr("Keyboards"),
+                        qsTr("Mice"),
+                        qsTr("Gamepads"),
+                        qsTr("Storage"),
+                        qsTr("Audio"),
+                        qsTr("Webcams")
+                    ]
+                    currentIndex: 0
+                    onCurrentIndexChanged: {
+                        var classMap = [0, 1, 2, 3, 5, 6, 7]
+                        filterClass = classMap[currentIndex] || 0
+                    }
+                }
+
+                // Sort
+                ComboBox {
+                    id: sortCombo
+                    implicitWidth: 130
+                    model: [
+                        qsTr("Default order"),
+                        qsTr("Sort by name"),
+                        qsTr("Sort by VID:PID"),
+                        qsTr("Last added first"),
+                        qsTr("Sort by class")
+                    ]
+                    currentIndex: sortMode
+                    onCurrentIndexChanged: sortMode = currentIndex
+                }
+            }
+
+            // ─── device count label ───
+            Label {
+                Layout.fillWidth: true
+                text: {
+                    var total = passthroughClient ? passthroughClient.deviceEnumerator.count : 0
+                    var shown = filteredModel.count
+                    if (shown === total)
+                        return qsTr("%1 device(s)").arg(total)
+                    return qsTr("Showing %1 of %2 device(s)").arg(shown).arg(total)
+                }
+                font.pointSize: 9
+                color: "#909090"
+            }
+
             // ─── unified device list ───
-            // Uses ListView section headers (transport "1" = USB, "2" = Bluetooth).
-            // DeviceEnumerator always produces USB devices before BT devices so the
-            // sections are naturally contiguous – no proxy sort needed.
+            // Uses a JS-based filter/sort layer on top of the C++ model.
             ListView {
                 id: deviceListView
                 Layout.fillWidth: true
@@ -120,10 +245,10 @@ Item {
                             ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
                 }
 
-                model: passthroughClient ? passthroughClient.deviceEnumerator : null
+                model: filteredModel
 
                 // Section header – only rendered when that transport type is present
-                section.property: "transport"
+                section.property: "sectionKey"
                 section.criteria: ViewSection.FullString
                 section.delegate: Column {
                     width: deviceListView.width
@@ -152,16 +277,13 @@ Item {
                 }
 
                 // ─── inline delegate ───
-                // All model roles (deviceName, transport, deviceClass, …) are
-                // accessible here because the delegate IS the ListView delegate scope.
-                // Do NOT extract this into a file-scope Component.
                 delegate: Rectangle {
                     width: deviceListView.width
                     height: rowContent.implicitHeight + 12
-                    color: isForwarding ? "#1A4CAF50" : "#1AFFFFFF"
+                    color: model.isForwarding ? "#1A4CAF50" : "#1AFFFFFF"
                     radius: 4
-                    border.color: isForwarding ? "#4CAF50" : "transparent"
-                    border.width: isForwarding ? 1 : 0
+                    border.color: model.isForwarding ? "#4CAF50" : "transparent"
+                    border.width: model.isForwarding ? 1 : 0
 
                     RowLayout {
                         id: rowContent
@@ -171,8 +293,8 @@ Item {
 
                         // ── device class icon ──
                         Rectangle {
-                            width: 32
-                            height: 32
+                            width: 36
+                            height: 36
                             radius: 4
                             color: "#404040"
 
@@ -181,7 +303,7 @@ Item {
                                 font.pointSize: 16
                                 font.family: "Segoe UI Emoji,Apple Color Emoji,Noto Color Emoji,sans-serif"
                                 text: {
-                                    switch (deviceClass) {
+                                    switch (model.deviceClass) {
                                     case 1: return "\u2328"      // ⌨ keyboard
                                     case 2: return "\uD83D\uDDB1" // 🖱 mouse
                                     case 3: return "\uD83C\uDFAE" // 🎮 gamepad
@@ -200,65 +322,117 @@ Item {
                             Layout.fillWidth: true
                             spacing: 2
 
+                            // Row 1: device name
                             Label {
-                                text: deviceName
+                                text: model.deviceName
                                 font.pointSize: 11
                                 color: "white"
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
 
+                            // Row 2: class, VID:PID, manufacturer
                             RowLayout {
                                 spacing: 8
                                 Layout.fillWidth: true
 
                                 Label {
-                                    text: deviceClassName
+                                    text: model.deviceClassName
                                     font.pointSize: 9
                                     color: "#B0B0B0"
                                 }
 
                                 Label {
-                                    text: vidPidText
+                                    text: model.vidPidText
                                     font.pointSize: 9
                                     color: "#808080"
                                     font.family: "Consolas,monospace"
                                 }
 
                                 Label {
-                                    visible: transport === 2 && batteryPercent >= 0
+                                    visible: model.manufacturer !== ""
                                     height: visible ? implicitHeight : 0
-                                    text: visible ? qsTr("Battery: %1%").arg(batteryPercent) : ""
-                                    font.pointSize: 9
-                                    color: batteryPercent > 20 ? "#4CAF50" : "#FF5252"
+                                    text: visible ? model.manufacturer : ""
+                                    font.pointSize: 8
+                                    color: "#70A0D0"
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: 180
+                                }
+                            }
+
+                            // Row 3: serial, location, driver, battery, added time
+                            RowLayout {
+                                spacing: 8
+                                Layout.fillWidth: true
+
+                                Label {
+                                    visible: model.serialNumber !== ""
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? "S/N: " + model.serialNumber : ""
+                                    font.pointSize: 8
+                                    color: "#909060"
+                                    font.family: "Consolas,monospace"
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: 150
                                 }
 
                                 Label {
-                                    visible: transport === 2
+                                    visible: model.transport === 1 && model.locationInfo !== ""
                                     height: visible ? implicitHeight : 0
-                                    text: visible ? (btConnected ? qsTr("Connected") : qsTr("Disconnected")) : ""
+                                    text: visible ? "\uD83D\uDCCD " + model.locationInfo : "" // 📍
+                                    font.pointSize: 8
+                                    color: "#7090B0"
+                                }
+
+                                Label {
+                                    visible: model.transport === 1 && model.driver !== ""
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? "[" + model.driver + "]" : ""
+                                    font.pointSize: 8
+                                    color: "#808060"
+                                    font.family: "Consolas,monospace"
+                                }
+
+                                Label {
+                                    visible: model.transport === 2 && model.batteryPercent >= 0
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? qsTr("Battery: %1%").arg(model.batteryPercent) : ""
                                     font.pointSize: 9
-                                    color: btConnected ? "#4CAF50" : "#FF5252"
+                                    color: model.batteryPercent > 20 ? "#4CAF50" : "#FF5252"
+                                }
+
+                                Label {
+                                    visible: model.transport === 2
+                                    height: visible ? implicitHeight : 0
+                                    text: visible ? (model.btConnected ? qsTr("Connected") : qsTr("Disconnected")) : ""
+                                    font.pointSize: 9
+                                    color: model.btConnected ? "#4CAF50" : "#FF5252"
+                                }
+
+                                // Device ID (useful for identification)
+                                Label {
+                                    text: "#" + model.deviceId
+                                    font.pointSize: 7
+                                    color: "#606060"
+                                    font.family: "Consolas,monospace"
                                 }
                             }
                         }
 
                         // ── forwarding status badge ──
                         Label {
-                            text: statusText
+                            text: model.statusText
                             font.pointSize: 9
-                            color: isForwarding ? "#4CAF50" : "#808080"
+                            color: model.isForwarding ? "#4CAF50" : "#808080"
                         }
 
                         // ── auto-forward checkbox ──
                         CheckBox {
                             text: qsTr("Auto")
-                            checked: autoForward
-                            // onClicked fires only on user interaction,
-                            // not on programmatic model updates via the binding.
+                            checked: model.autoForward
                             onClicked: {
                                 if (passthroughClient) {
-                                    passthroughClient.deviceEnumerator.setAutoForward(index, checked)
+                                    passthroughClient.deviceEnumerator.setAutoForward(model.sourceIndex, checked)
                                 }
                             }
 
@@ -268,26 +442,23 @@ Item {
 
                         // ── forwarding toggle ──
                         Switch {
-                            checked: isForwarding
+                            checked: model.isForwarding
                             enabled: passthroughClient
                                      && passthroughClient.connected
                                      && passthroughClient.vhciAvailable
-                                     && (transport !== 2 || btConnected)
-                                     && (transport !== 2
-                                         || deviceClass === 1
-                                         || deviceClass === 2
-                                         || deviceClass === 3
-                                         || deviceClass === 4)
+                                     && (model.transport !== 2 || model.btConnected)
+                                     && (model.transport !== 2
+                                         || model.deviceClass === 1
+                                         || model.deviceClass === 2
+                                         || model.deviceClass === 3
+                                         || model.deviceClass === 4)
 
-                            // Use the MODEL's isForwarding (not `checked`) to determine
-                            // the desired action so the logic is independent of QML
-                            // binding-revert timing.
                             onClicked: {
                                 if (passthroughClient) {
-                                    if (isForwarding) {
-                                        passthroughClient.detachDevice(deviceId)
+                                    if (model.isForwarding) {
+                                        passthroughClient.detachDevice(model.deviceId)
                                     } else {
-                                        passthroughClient.attachDevice(deviceId)
+                                        passthroughClient.attachDevice(model.deviceId)
                                     }
                                 }
                             }
@@ -301,7 +472,11 @@ Item {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignHCenter
                 visible: deviceListView.count === 0
-                text: qsTr("No devices found. Click Refresh to scan again.")
+                text: {
+                    if (searchText.length > 0 || filterTransport > 0 || filterClass > 0)
+                        return qsTr("No devices match the current search/filter. Try clearing your filters.")
+                    return qsTr("No devices found. Click Refresh to scan again.")
+                }
                 color: "#808080"
                 font.pointSize: 10
                 horizontalAlignment: Text.AlignHCenter
@@ -315,6 +490,96 @@ Item {
                 font.pointSize: 9
                 wrapMode: Text.WordWrap
             }
+        }
+    }
+
+    // ─── Filtered/sorted model (JS ListModel) ───
+    // Rebuilds whenever the source model changes, or search/filter/sort changes.
+    ListModel {
+        id: filteredModel
+    }
+
+    Connections {
+        target: passthroughClient ? passthroughClient.deviceEnumerator : null
+        onDevicesChanged: rebuildFilteredModel()
+        onDataChanged: rebuildFilteredModel()
+    }
+
+    onSearchTextChanged: rebuildFilteredModel()
+    onSortModeChanged: rebuildFilteredModel()
+    onFilterTransportChanged: rebuildFilteredModel()
+    onFilterClassChanged: rebuildFilteredModel()
+    onPassthroughClientChanged: rebuildFilteredModel()
+
+    function rebuildFilteredModel() {
+        filteredModel.clear()
+
+        if (!passthroughClient) return
+        var enumerator = passthroughClient.deviceEnumerator
+        if (!enumerator) return
+
+        var items = []
+        var count = enumerator.count
+
+        for (var i = 0; i < count; i++) {
+            var idx = enumerator.index(i, 0)
+            var item = {
+                deviceId: enumerator.data(idx, 257),       // DeviceIdRole
+                deviceName: enumerator.data(idx, 258),      // NameRole
+                vendorId: enumerator.data(idx, 259),        // VendorIdRole
+                productId: enumerator.data(idx, 260),       // ProductIdRole
+                transport: enumerator.data(idx, 261),       // TransportRole
+                deviceClass: enumerator.data(idx, 262),     // DeviceClassRole
+                serialNumber: enumerator.data(idx, 263),    // SerialNumberRole
+                isForwarding: enumerator.data(idx, 264),    // IsForwardingRole
+                autoForward: enumerator.data(idx, 265),     // AutoForwardRole
+                statusText: enumerator.data(idx, 266),      // StatusTextRole
+                deviceClassName: enumerator.data(idx, 267), // DeviceClassNameRole
+                vidPidText: enumerator.data(idx, 268),      // VidPidTextRole
+                batteryPercent: enumerator.data(idx, 269),  // BatteryPercentRole
+                rssi: enumerator.data(idx, 270),            // RssiRole
+                btPaired: enumerator.data(idx, 271),        // BtPairedRole
+                btConnected: enumerator.data(idx, 272),     // BtConnectedRole
+                locationInfo: enumerator.data(idx, 273),    // LocationInfoRole
+                driver: enumerator.data(idx, 274),          // DriverRole
+                manufacturer: enumerator.data(idx, 275),    // ManufacturerRole
+                sourceIndex: i,
+                sectionKey: "" + enumerator.data(idx, 261)  // transport as string for section
+            }
+
+            // Apply transport filter
+            if (filterTransport === 1 && item.transport !== 1) continue
+            if (filterTransport === 2 && item.transport !== 2) continue
+
+            // Apply class filter
+            if (filterClass > 0 && item.deviceClass !== filterClass) continue
+
+            // Apply search filter
+            if (searchText.length > 0) {
+                var q = searchText.toLowerCase()
+                var haystack = (item.deviceName + " " + item.vidPidText + " " +
+                                item.manufacturer + " " + item.serialNumber + " " +
+                                item.deviceClassName + " " + item.driver + " " +
+                                item.locationInfo).toLowerCase()
+                if (haystack.indexOf(q) < 0) continue
+            }
+
+            items.push(item)
+        }
+
+        // Apply sort
+        if (sortMode === 1) {
+            items.sort(function(a, b) { return a.deviceName.localeCompare(b.deviceName) })
+        } else if (sortMode === 2) {
+            items.sort(function(a, b) { return a.vidPidText.localeCompare(b.vidPidText) })
+        } else if (sortMode === 3) {
+            items.reverse() // newest first (devices are enumerated in order)
+        } else if (sortMode === 4) {
+            items.sort(function(a, b) { return a.deviceClass - b.deviceClass })
+        }
+
+        for (var j = 0; j < items.length; j++) {
+            filteredModel.append(items[j])
         }
     }
 }
