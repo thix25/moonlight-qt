@@ -11,6 +11,9 @@
 
 #include "protocol.h"
 
+#include <QMetaType>
+Q_DECLARE_METATYPE(MlptProtocol::UsbIpHeader)
+
 // Forward-declare libusb types (avoid pulling in libusb.h in header)
 struct libusb_context;
 struct libusb_device_handle;

@@ -609,7 +609,11 @@ void UsbIpExporter::handleTransferComplete(libusb_transfer* transfer)
         }
     }
 
-    resp.dataLen = responseData.size();
+    // dataLen = actual_length (bytes transferred by the device).
+    // For IN:  actual_length == responseData.size().
+    // For OUT: actual_length = bytes written, responseData is empty.
+    // Receivers use data.size() for attached bytes, dataLen for actual_length.
+    resp.dataLen = static_cast<uint32_t>(transfer->actual_length);
 
     emit urbCompleted(m_DeviceId, resp, responseData);
 

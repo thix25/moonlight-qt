@@ -308,8 +308,15 @@ bool UsbIpDaemon::handleImportRequest(DaemonDeviceSession* session)
         udev->bNumConfigurations = d[17];
     }
 
-    // Speed
-    udev->speed = bswap32(static_cast<uint32_t>(exporter->usbSpeed()));
+    // Speed — map from libusb enum to Linux kernel usb_device_speed enum.
+    // libusb:  LOW=1, FULL=2, HIGH=3, SUPER=4, SUPER_PLUS=5
+    // kernel:  LOW=1, FULL=2, HIGH=3, WIRELESS=4, SUPER=5, SUPER_PLUS=6
+    uint32_t libusbSpeed = exporter->usbSpeed();
+    uint32_t wireSpeed = libusbSpeed;
+    if (libusbSpeed >= 4) {
+        wireSpeed = libusbSpeed + 1; // shift SUPER(4→5) and SUPER_PLUS(5→6)
+    }
+    udev->speed = bswap32(wireSpeed);
 
     // Configuration value and interface count from config descriptor
     QByteArray confDesc = exporter->configDescriptor();
