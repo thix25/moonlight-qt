@@ -152,9 +152,19 @@ void PassthroughClient::attachDevice(uint32_t deviceId)
             qWarning() << "Failed to open device" << deviceId
                        << devInfo->name
                        << QString::asprintf("(%04x:%04x)", devInfo->vendorId, devInfo->productId)
-                       << "with libusb";
+                       << "with libusb"
+                       << "(driver:" << devInfo->driver << ", serial:" << devInfo->serialNumber << ")";
             delete exporter;
-            m_DeviceEnumerator.setDeviceError(deviceId, tr("Failed to open device (check driver or replug)"));
+            QString errMsg;
+            if (!devInfo->driver.isEmpty() &&
+                devInfo->driver.compare("WinUSB", Qt::CaseInsensitive) != 0) {
+                errMsg = tr("Cannot capture device — driver \"%1\" blocks libusb. "
+                            "Use Zadig to replace with WinUSB, or replug the device.")
+                             .arg(devInfo->driver);
+            } else {
+                errMsg = tr("Failed to open device (check driver or replug)");
+            }
+            m_DeviceEnumerator.setDeviceError(deviceId, errMsg);
             emit deviceAttachFailed(deviceId, MlptProtocol::ATTACH_ERR_FAILED);
             return;
         }
