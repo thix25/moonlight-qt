@@ -606,7 +606,12 @@ void DeviceEnumerator::stopHotplugPolling()
 void DeviceEnumerator::pollHotplug()
 {
     auto makeFp = [](const PassthroughDevice& dev) {
-        return QString("%1:%2:%3:%4")
+        if (dev.transport == MlptProtocol::TRANSPORT_BLUETOOTH) {
+            // BT address (serialNumber) is unique and stable. Don't include VID/PID
+            // because they change between connected (resolved via HID) and disconnected (0:0).
+            return QString("BT:%1").arg(dev.serialNumber);
+        }
+        return QString("USB:%1:%2:%3:%4")
             .arg(dev.vendorId).arg(dev.productId)
             .arg(dev.serialNumber).arg(dev.instancePath);
     };
@@ -674,6 +679,14 @@ void DeviceEnumerator::pollHotplug()
                 m_Devices[i].name = fresh.name;
                 changed = true;
             }
+            if (m_Devices[i].vendorId != fresh.vendorId) {
+                m_Devices[i].vendorId = fresh.vendorId;
+                changed = true;
+            }
+            if (m_Devices[i].productId != fresh.productId) {
+                m_Devices[i].productId = fresh.productId;
+                changed = true;
+            }
 
             if (changed) {
                 QModelIndex idx = index(i);
@@ -686,38 +699,55 @@ void DeviceEnumerator::pollHotplug()
     // ── Structural changes (devices added or removed) ──
     // Fall back to full model reset with state restoration.
 
-    // Save forwarding state from old list
-    QHash<QString, bool> forwardingState;
-    QHash<QString, bool> autoForwardState;
+    // Save old device IDs for removed-device signals
     QHash<QString, uint32_t> oldIdMap;
-    QHash<QString, QDateTime> oldAddedTime;
     for (const auto& dev : oldDevices) {
-        QString fp = makeFp(dev);
-        forwardingState.insert(fp, dev.isForwarding);
-        autoForwardState.insert(fp, dev.autoForward);
-        oldIdMap.insert(fp, dev.deviceId);
-        oldAddedTime.insert(fp, dev.addedTime);
+        oldIdMap.insert(makeFp(dev), dev.deviceId);
     }
 
     beginResetModel();
-    m_Devices = freshDevices;
 
-    // Restore state for persisted devices
-    for (auto& dev : m_Devices) {
-        QString fp = makeFp(dev);
-        if (oldFingerprints.contains(fp)) {
-            dev.deviceId = oldIdMap[fp];
-            dev.isForwarding = forwardingState.value(fp, false);
-            dev.autoForward = autoForwardState.value(fp, false);
-            dev.addedTime = oldAddedTime.value(fp, dev.addedTime);
+    // Build merged list: keep existing devices in original order (so the list
+    // stays stable), then append newly-added devices at the end (so the user
+    // can easily identify which device was just plugged in).
+    QList<PassthroughDevice> mergedDevices;
+
+    // Existing devices that are still present, in their original order
+    for (const auto& oldDev : oldDevices) {
+        QString fp = makeFp(oldDev);
+        if (removed.contains(fp)) continue; // Unplugged — skip
+
+        auto freshIt = newFpToIndex.find(fp);
+        if (freshIt != newFpToIndex.end()) {
+            // Use fresh enumeration data (updated name, battery, etc.)
+            PassthroughDevice dev = freshDevices[freshIt.value()];
+            dev.deviceId = oldDev.deviceId;
+            dev.isForwarding = oldDev.isForwarding;
+            dev.autoForward = oldDev.autoForward;
+            dev.addedTime = oldDev.addedTime;
+            mergedDevices.append(dev);
         }
     }
 
-    // Fix device ID collisions
+    // New devices appended at the end
+    for (const auto& fp : added) {
+        auto freshIt = newFpToIndex.find(fp);
+        if (freshIt != newFpToIndex.end()) {
+            PassthroughDevice dev = freshDevices[freshIt.value()];
+            dev.deviceId = 0; // Assigned below
+            // addedTime is already set to now by enumerateUsb/enumerateBluetooth
+            mergedDevices.append(dev);
+        }
+    }
+
+    m_Devices = mergedDevices;
+
+    // Fix device IDs: existing devices keep their old IDs, new devices (id==0)
+    // get fresh sequential IDs that don't collide with existing ones.
     QSet<uint32_t> usedIds;
     m_NextDeviceId = savedNextId;
     for (auto& dev : m_Devices) {
-        if (usedIds.contains(dev.deviceId)) {
+        if (dev.deviceId == 0 || usedIds.contains(dev.deviceId)) {
             dev.deviceId = m_NextDeviceId++;
         }
         usedIds.insert(dev.deviceId);
