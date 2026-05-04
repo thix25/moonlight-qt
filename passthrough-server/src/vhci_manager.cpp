@@ -533,10 +533,24 @@ void VhciManager::readLoop(AttachedDevice* dev)
             bool isOut = (hdr->base.direction == 0);
 
             if (isOut && expectedDataLen > 0) {
-                size_t totalExpected = sizeof(NativeUsbIpHeader) + expectedDataLen;
-                if (hdr->u.cmd_submit.number_of_packets > 0) {
-                    totalExpected += hdr->u.cmd_submit.number_of_packets *
+                size_t totalExpected = sizeof(NativeUsbIpHeader) + static_cast<size_t>(expectedDataLen);
+                int32_t numPackets = hdr->u.cmd_submit.number_of_packets;
+                if (numPackets > 0) {
+                    size_t isoSize = static_cast<size_t>(numPackets) *
                                     sizeof(NativeUsbIpIsoPacketDescriptor);
+                    // Guard against overflow
+                    if (isoSize / sizeof(NativeUsbIpIsoPacketDescriptor) != static_cast<size_t>(numPackets) ||
+                        totalExpected + isoSize < totalExpected) {
+                        printf("[VHCI] Invalid ISO packet count %d for device %u, skipping\n",
+                               numPackets, dev->deviceId);
+                        continue;
+                    }
+                    totalExpected += isoSize;
+                }
+
+                // Cap to buffer size
+                if (totalExpected > VHCI_READ_BUFFER_SIZE) {
+                    totalExpected = VHCI_READ_BUFFER_SIZE;
                 }
 
                 // If we only got the header, do a second read for the data

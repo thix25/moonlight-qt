@@ -415,7 +415,7 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
 
     case MlptProtocol::USB_XFER_BULK: {
         int bufLen = header.dataLen;
-        unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        unsigned char* buf = static_cast<unsigned char*>(calloc(bufLen > 0 ? bufLen : 1, 1));
         if (!buf) {
             MlptProtocol::UsbIpHeader resp = header;
             resp.status = -12;
@@ -436,7 +436,7 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
 
     case MlptProtocol::USB_XFER_INTERRUPT: {
         int bufLen = header.dataLen;
-        unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        unsigned char* buf = static_cast<unsigned char*>(calloc(bufLen > 0 ? bufLen : 1, 1));
         if (!buf) {
             MlptProtocol::UsbIpHeader resp = header;
             resp.status = -12;
@@ -457,7 +457,7 @@ void UsbIpExporter::submitUrb(const MlptProtocol::UsbIpHeader& header, const QBy
 
     case MlptProtocol::USB_XFER_ISOCHRONOUS: {
         int bufLen = header.dataLen;
-        unsigned char* buf = static_cast<unsigned char*>(malloc(bufLen > 0 ? bufLen : 1));
+        unsigned char* buf = static_cast<unsigned char*>(calloc(bufLen > 0 ? bufLen : 1, 1));
         if (!buf) {
             MlptProtocol::UsbIpHeader resp = header;
             resp.status = -12;

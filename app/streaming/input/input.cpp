@@ -208,7 +208,9 @@ SdlInputHandler::~SdlInputHandler()
 {
     for (int i = 0; i < MAX_GAMEPADS; i++) {
         if (m_GamepadState[i].mouseEmulationTimer != 0) {
-            Session::get()->notifyMouseEmulationMode(false);
+            if (Session::get() != nullptr) {
+                Session::get()->notifyMouseEmulationMode(false);
+            }
             SDL_RemoveTimer(m_GamepadState[i].mouseEmulationTimer);
         }
 #if !SDL_VERSION_ATLEAST(2, 0, 9)

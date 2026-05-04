@@ -631,6 +631,10 @@ void BtHidCapture::handleInterruptOutUrb(const MlptProtocol::UsbIpHeader& header
 
         OVERLAPPED overlapped = {};
         overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!overlapped.hEvent) {
+            sendUrbResponse(header, -12); // ENOMEM
+            return;
+        }
 
         DWORD bytesWritten = 0;
         BOOL ok = WriteFile(m_HidHandle, buf.data(), buf.size(), &bytesWritten, &overlapped);
@@ -697,6 +701,11 @@ void BtHidCapture::readLoop()
 
     OVERLAPPED overlapped = {};
     overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!overlapped.hEvent) {
+        qCritical() << "BtHidCapture: failed to create read event";
+        emit deviceDisconnected(m_DeviceId);
+        return;
+    }
 
     while (m_ReadRunning && m_HidHandle != INVALID_HANDLE_VALUE) {
         ResetEvent(overlapped.hEvent);

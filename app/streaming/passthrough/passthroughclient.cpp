@@ -585,6 +585,16 @@ void PassthroughClient::processUsbIpSubmit(const QByteArray& payload)
 
     QByteArray data;
     if (header.dataLen > 0 && payload.size() > static_cast<int>(sizeof(header))) {
+        int availableLen = payload.size() - static_cast<int>(sizeof(header));
+        if (availableLen < static_cast<int>(header.dataLen)) {
+            qWarning() << "Passthrough: USBIP_SUBMIT payload truncated:" << availableLen << "< expected" << header.dataLen;
+            MlptProtocol::UsbIpHeader resp = header;
+            resp.status = -71; // EPROTO
+            resp.dataLen = 0;
+            QByteArray respPayload(reinterpret_cast<const char*>(&resp), sizeof(resp));
+            sendMessage(MlptProtocol::MSG_USBIP_RETURN, respPayload);
+            return;
+        }
         data = payload.mid(sizeof(header), header.dataLen);
     }
 

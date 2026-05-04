@@ -7,6 +7,8 @@
 #include <string>
 #include <csignal>
 
+#include <atomic>
+
 #ifdef _WIN32
 #include <WinSock2.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -18,20 +20,22 @@
 #include "vhci_manager.h"
 #include "systray.h"
 
-static PassthroughServer* g_Server = nullptr;
-static SystemTray* g_Tray = nullptr;
+static std::atomic<PassthroughServer*> g_Server{nullptr};
+static std::atomic<SystemTray*> g_Tray{nullptr};
 
 void signalHandler(int sig)
 {
     (void)sig;
     printf("\nShutting down...\n");
-    if (g_Server) {
-        g_Server->stop();
+    PassthroughServer* server = g_Server.load(std::memory_order_acquire);
+    if (server) {
+        server->stop();
     }
-    if (g_Tray) {
+    SystemTray* tray = g_Tray.load(std::memory_order_acquire);
+    if (tray) {
         // Thread-safe: posts WM_CLOSE instead of calling DestroyWindow
         // from the signal handler thread
-        g_Tray->requestStop();
+        tray->requestStop();
     }
 }
 
@@ -88,7 +92,7 @@ int main(int argc, char* argv[])
 
     // Start server (VhciManager is created internally)
     PassthroughServer server;
-    g_Server = &server;
+    g_Server.store(&server, std::memory_order_release);
 
     ServerConfig config;
     config.port = port;
@@ -117,7 +121,7 @@ int main(int argc, char* argv[])
     SystemTray tray;
     if (enableTray) {
         if (tray.init("Moonlight Passthrough Server")) {
-            g_Tray = &tray;
+            g_Tray.store(&tray, std::memory_order_release);
 
             tray.setExitCallback([&]() {
                 printf("\nExit requested from tray\n");
@@ -155,8 +159,8 @@ int main(int argc, char* argv[])
         }
     }
 
-    g_Tray = nullptr;
-    g_Server = nullptr;
+    g_Tray.store(nullptr, std::memory_order_release);
+    g_Server.store(nullptr, std::memory_order_release);
 
 #ifdef _WIN32
     WSACleanup();

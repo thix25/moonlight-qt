@@ -81,6 +81,13 @@ void PassthroughServer::stop()
         m_AcceptThread.join();
     }
 
+    // Clear device owners FIRST to prevent forwardVhciUrbToClient from
+    // finding clients that are about to be destroyed
+    {
+        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
+        m_DeviceOwners.clear();
+    }
+
     {
         std::lock_guard<std::mutex> lock(m_ClientsMutex);
         for (auto& client : m_Clients) {
@@ -94,11 +101,6 @@ void PassthroughServer::stop()
             }
         }
         m_Clients.clear();
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
-        m_DeviceOwners.clear();
     }
 
     log("Server stopped");
@@ -505,17 +507,17 @@ void PassthroughServer::forwardVhciUrbToClient(uint32_t deviceId,
     const uint8_t* trailingData = nativeData + sizeof(NativeUsbIpHeader);
     size_t trailingLen = nativeLen - sizeof(NativeUsbIpHeader);
 
-    // Find the client that owns this device
-    ClientConnection* owner = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
-        auto it = m_DeviceOwners.find(deviceId);
-        if (it != m_DeviceOwners.end()) {
-            owner = it->second;
-        }
-    }
+    // Hold the device owners lock through the entire send to prevent
+    // use-after-free if stop() destroys the ClientConnection concurrently
+    std::lock_guard<std::mutex> lock(m_DeviceOwnersMutex);
 
-    if (!owner || !owner->running) {
+    auto it = m_DeviceOwners.find(deviceId);
+    if (it == m_DeviceOwners.end()) {
+        return;
+    }
+    ClientConnection* owner = it->second;
+
+    if (!owner->running) {
         return;
     }
 
