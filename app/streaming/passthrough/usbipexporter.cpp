@@ -85,31 +85,91 @@ bool UsbIpExporter::openDevice(uint16_t vendorId, uint16_t productId, const QStr
 
         QByteArray serialUtf8 = serial.toUtf8();
         bool found = false;
+        int vidPidMatches = 0;
+        int openFailures = 0;
+        libusb_device_handle* fallbackHandle = nullptr;
 
         for (ssize_t i = 0; i < count; i++) {
             struct libusb_device_descriptor desc;
             if (libusb_get_device_descriptor(devList[i], &desc) != 0) continue;
             if (desc.idVendor != vendorId || desc.idProduct != productId) continue;
 
+            vidPidMatches++;
+
             libusb_device_handle* handle;
-            if (libusb_open(devList[i], &handle) != 0) continue;
+            int rc = libusb_open(devList[i], &handle);
+            if (rc != 0) {
+                openFailures++;
+                qWarning() << "UsbIpExporter: libusb_open failed for"
+                           << QString::asprintf("%04x:%04x", vendorId, productId)
+                           << "bus" << libusb_get_bus_number(devList[i])
+                           << "port" << libusb_get_port_number(devList[i])
+                           << ":" << libusb_strerror(static_cast<libusb_error>(rc));
+                continue;
+            }
 
             if (desc.iSerialNumber > 0) {
                 unsigned char buf[256];
                 int len = libusb_get_string_descriptor_ascii(handle, desc.iSerialNumber, buf, sizeof(buf));
                 if (len > 0 && QByteArray(reinterpret_cast<char*>(buf), len) == serialUtf8) {
+                    // Exact serial match
                     m_DeviceHandle = handle;
                     found = true;
                     break;
                 }
+                if (len > 0) {
+                    qInfo() << "UsbIpExporter: serial mismatch for"
+                            << QString::asprintf("%04x:%04x", vendorId, productId)
+                            << "- expected" << serial
+                            << "got" << QByteArray(reinterpret_cast<char*>(buf), len);
+                }
+            } else {
+                qInfo() << "UsbIpExporter: device has no serial descriptor, instance-path serial was"
+                        << serial;
             }
-            libusb_close(handle);
+
+            // Keep as fallback candidate (close previous fallback if any)
+            if (fallbackHandle) {
+                libusb_close(fallbackHandle);
+            }
+            fallbackHandle = handle;
+        }
+
+        // Fallback: if serial didn't match but exactly one device could be opened,
+        // use it anyway (serial from Windows instance path can differ from USB descriptor)
+        if (!found && fallbackHandle) {
+            if (vidPidMatches - openFailures == 1) {
+                qWarning() << "UsbIpExporter: serial mismatch but only one"
+                           << QString::asprintf("%04x:%04x", vendorId, productId)
+                           << "device found — using it as fallback";
+                m_DeviceHandle = fallbackHandle;
+                fallbackHandle = nullptr;
+                found = true;
+            }
+        }
+
+        if (fallbackHandle && fallbackHandle != m_DeviceHandle) {
+            libusb_close(fallbackHandle);
         }
 
         libusb_free_device_list(devList, 1);
 
         if (!found) {
-            qWarning() << "UsbIpExporter: device with matching serial not found";
+            if (vidPidMatches == 0) {
+                qWarning() << "UsbIpExporter: no device with VID/PID"
+                           << QString::asprintf("%04x:%04x", vendorId, productId)
+                           << "found in libusb";
+            } else if (openFailures == vidPidMatches) {
+                qWarning() << "UsbIpExporter: found" << vidPidMatches
+                           << "device(s) with matching VID/PID but libusb_open failed for all"
+                           << "— the device driver (e.g. USBSTOR) may be blocking access."
+                           << "Try replacing the driver with WinUSB using Zadig.";
+            } else {
+                qWarning() << "UsbIpExporter: device with matching serial not found"
+                           << "(wanted" << serial << ","
+                           << vidPidMatches << "VID/PID matches,"
+                           << openFailures << "open failures)";
+            }
             return false;
         }
     }
