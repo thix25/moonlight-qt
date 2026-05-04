@@ -15,6 +15,7 @@
 #include <BluetoothAPIs.h>
 #include <hidsdi.h>
 #include <devpkey.h>
+#include <winioctl.h>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "bthprops.lib")
@@ -85,6 +86,21 @@ QVariant DeviceEnumerator::data(const QModelIndex& index, int role) const
         return dev.manufacturer;
     case AddedTimeRole:
         return dev.addedTime;
+    case StorageSizeTextRole: {
+        if (dev.storageSizeBytes == 0) return QString();
+        const double GB = 1000000000.0;
+        const double TB = 1000000000000.0;
+        const double MB = 1000000.0;
+        if (dev.storageSizeBytes >= TB)
+            return QString("%1 TB").arg(dev.storageSizeBytes / TB, 0, 'f', 1);
+        if (dev.storageSizeBytes >= GB)
+            return QString("%1 GB").arg(dev.storageSizeBytes / GB, 0, 'f', 1);
+        if (dev.storageSizeBytes >= MB)
+            return QString("%1 MB").arg(static_cast<int>(dev.storageSizeBytes / MB));
+        return QString("%1 KB").arg(static_cast<int>(dev.storageSizeBytes / 1000.0));
+    }
+    case LastErrorRole:
+        return dev.lastError;
     default:
         return QVariant();
     }
@@ -113,6 +129,8 @@ QHash<int, QByteArray> DeviceEnumerator::roleNames() const
         { DriverRole,         "driver" },
         { ManufacturerRole,   "manufacturer" },
         { AddedTimeRole,      "addedTime" },
+        { StorageSizeTextRole,"storageSizeText" },
+        { LastErrorRole,      "lastError" },
     };
 }
 
@@ -142,6 +160,18 @@ void DeviceEnumerator::setDeviceForwarding(uint32_t deviceId, bool forwarding)
             m_Devices[i].isForwarding = forwarding;
             QModelIndex idx = index(i);
             emit dataChanged(idx, idx, { IsForwardingRole, StatusTextRole });
+            return;
+        }
+    }
+}
+
+void DeviceEnumerator::setDeviceError(uint32_t deviceId, const QString& error)
+{
+    for (int i = 0; i < m_Devices.size(); i++) {
+        if (m_Devices[i].deviceId == deviceId) {
+            m_Devices[i].lastError = error;
+            QModelIndex idx = index(i);
+            emit dataChanged(idx, idx, { LastErrorRole });
             return;
         }
     }
@@ -243,6 +273,79 @@ static uint8_t classifyUsbDevice(const QString& deviceClass, const QString& comp
         return MlptProtocol::DEVCLASS_HID_OTHER;
 
     return MlptProtocol::DEVCLASS_OTHER;
+}
+
+// {53F56307-B6BF-11D0-94F2-00A0C91EFB8B}
+static const GUID LocalGUID_DEVINTERFACE_DISK =
+    { 0x53F56307, 0xB6BF, 0x11D0, { 0x94, 0xF2, 0x00, 0xA0, 0xC9, 0x1E, 0xFB, 0x8B } };
+
+// Walk the USB device tree to find a disk descendant and query its physical size
+static quint64 getStorageCapacity(DEVINST usbDevInst)
+{
+    // Search children and grandchildren for a USBSTOR\DISK device
+    auto findDisk = [](DEVINST parent) -> DEVINST {
+        DEVINST child;
+        if (CM_Get_Child(&child, parent, 0) != CR_SUCCESS) return 0;
+        do {
+            WCHAR instId[MAX_DEVICE_ID_LEN];
+            if (CM_Get_Device_IDW(child, instId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS) {
+                if (_wcsnicmp(instId, L"USBSTOR\\DISK", 12) == 0)
+                    return child;
+            }
+            // Check grandchildren (for composite USB devices)
+            DEVINST grandchild;
+            if (CM_Get_Child(&grandchild, child, 0) == CR_SUCCESS) {
+                do {
+                    if (CM_Get_Device_IDW(grandchild, instId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS) {
+                        if (_wcsnicmp(instId, L"USBSTOR\\DISK", 12) == 0)
+                            return grandchild;
+                    }
+                } while (CM_Get_Sibling(&grandchild, grandchild, 0) == CR_SUCCESS);
+            }
+        } while (CM_Get_Sibling(&child, child, 0) == CR_SUCCESS);
+        return 0;
+    };
+
+    DEVINST diskInst = findDisk(usbDevInst);
+    if (diskInst == 0) return 0;
+
+    WCHAR diskInstId[MAX_DEVICE_ID_LEN];
+    if (CM_Get_Device_IDW(diskInst, diskInstId, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS)
+        return 0;
+
+    // Get the disk interface path via Configuration Manager
+    ULONG bufLen = 0;
+    if (CM_Get_Device_Interface_List_SizeW(&bufLen,
+            const_cast<LPGUID>(&LocalGUID_DEVINTERFACE_DISK),
+            diskInstId, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS || bufLen <= 1)
+        return 0;
+
+    QByteArray ifBuf(static_cast<int>(bufLen * sizeof(WCHAR)), 0);
+    if (CM_Get_Device_Interface_ListW(
+            const_cast<LPGUID>(&LocalGUID_DEVINTERFACE_DISK),
+            diskInstId, reinterpret_cast<PWCHAR>(ifBuf.data()), bufLen,
+            CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS)
+        return 0;
+
+    QString diskPath = QString::fromWCharArray(reinterpret_cast<const WCHAR*>(ifBuf.constData()));
+    if (diskPath.isEmpty()) return 0;
+
+    // Open disk device and query total physical size
+    HANDLE hDisk = CreateFileW(reinterpret_cast<LPCWSTR>(diskPath.utf16()),
+        GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hDisk == INVALID_HANDLE_VALUE) return 0;
+
+    GET_LENGTH_INFORMATION lengthInfo = {};
+    DWORD bytesReturned = 0;
+    quint64 size = 0;
+    if (DeviceIoControl(hDisk, IOCTL_DISK_GET_LENGTH_INFO,
+            nullptr, 0, &lengthInfo, sizeof(lengthInfo), &bytesReturned, nullptr)) {
+        size = static_cast<quint64>(lengthInfo.Length.QuadPart);
+    }
+    CloseHandle(hDisk);
+
+    return size;
 }
 
 static QString getDeviceRegistryProperty(HDEVINFO devInfo, SP_DEVINFO_DATA* devInfoData, DWORD property)
@@ -362,6 +465,13 @@ void DeviceEnumerator::enumerateUsb()
         dev.rssi = 0;
         dev.btPaired = false;
         dev.btConnected = false;
+        dev.storageSizeBytes = 0;
+        dev.lastError.clear();
+
+        // Query physical disk size for storage devices
+        if (dev.deviceClass == MlptProtocol::DEVCLASS_STORAGE) {
+            dev.storageSizeBytes = getStorageCapacity(devInfoData.DevInst);
+        }
 
         m_Devices.append(dev);
     }
@@ -476,6 +586,8 @@ void DeviceEnumerator::enumerateBluetooth()
         dev.isForwarding = false;
         dev.autoForward = false;
         dev.addedTime = QDateTime::currentDateTime();
+        dev.storageSizeBytes = 0;
+        dev.lastError.clear();
         dev.btPaired = deviceInfo.fAuthenticated;
         dev.btConnected = deviceInfo.fConnected;
         dev.rssi = 0;
@@ -725,6 +837,7 @@ void DeviceEnumerator::pollHotplug()
             dev.isForwarding = oldDev.isForwarding;
             dev.autoForward = oldDev.autoForward;
             dev.addedTime = oldDev.addedTime;
+            dev.lastError = oldDev.lastError;
             mergedDevices.append(dev);
         }
     }

@@ -25,6 +25,8 @@ struct PassthroughDevice {
     bool     isForwarding;
     bool     autoForward;
     QDateTime addedTime;      // When the device was first seen
+    quint64  storageSizeBytes; // Physical disk size (storage class, 0 if unknown)
+    QString  lastError;       // Last attach/detach error (empty = no error)
 
     // Bluetooth-specific
     int8_t   batteryPercent;  // -1 if unknown
@@ -61,6 +63,8 @@ public:
         DriverRole,
         ManufacturerRole,
         AddedTimeRole,
+        StorageSizeTextRole,
+        LastErrorRole,
     };
 
     explicit DeviceEnumerator(QObject* parent = nullptr);
@@ -76,6 +80,7 @@ public:
 
     void enumerate();
     void setDeviceForwarding(uint32_t deviceId, bool forwarding);
+    void setDeviceError(uint32_t deviceId, const QString& error);
 
     // Start/stop periodic hot-plug polling
     void startHotplugPolling(int intervalMs = 5000);
