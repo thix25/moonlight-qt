@@ -503,6 +503,7 @@ Item {
         target: passthroughClient ? passthroughClient.deviceEnumerator : null
         onDevicesChanged: rebuildFilteredModel()
         onDataChanged: rebuildFilteredModel()
+        onModelReset: rebuildFilteredModel()
     }
 
     onSearchTextChanged: rebuildFilteredModel()
@@ -543,6 +544,7 @@ Item {
                 locationInfo: enumerator.data(idx, 273),    // LocationInfoRole
                 driver: enumerator.data(idx, 274),          // DriverRole
                 manufacturer: enumerator.data(idx, 275),    // ManufacturerRole
+                addedTimeMs: (function() { var dt = enumerator.data(idx, 276); return dt ? dt.getTime() : 0; })(), // AddedTimeRole
                 sourceIndex: i,
                 sectionKey: "" + enumerator.data(idx, 261)  // transport as string for section
             }
@@ -573,7 +575,7 @@ Item {
         } else if (sortMode === 2) {
             items.sort(function(a, b) { return a.vidPidText.localeCompare(b.vidPidText) })
         } else if (sortMode === 3) {
-            items.reverse() // newest first (devices are enumerated in order)
+            items.sort(function(a, b) { return b.addedTimeMs - a.addedTimeMs }) // newest first by timestamp
         } else if (sortMode === 4) {
             items.sort(function(a, b) { return a.deviceClass - b.deviceClass })
         }
